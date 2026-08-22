@@ -36,6 +36,10 @@ mkdir -p cliproxyapi/auths cliproxyapi/logs cliproxyapi/plugins secrets
 [ -f "$CONTENT_DIR/config.yaml" ] && cp -a "$CONTENT_DIR/config.yaml" cliproxyapi/config.yaml
 [ -d "$CONTENT_DIR/secrets" ] && cp -a "$CONTENT_DIR/secrets/." secrets/
 [ -d "$CONTENT_DIR/plugins" ] && cp -a "$CONTENT_DIR/plugins/." cliproxyapi/plugins/
+if [ -d "$CONTENT_DIR/auths" ]; then
+  cp -a "$CONTENT_DIR/auths/." cliproxyapi/auths/
+  echo ">>> auths(登录态)已还原 —— 若已过期，请到面板重新扫码登录"
+fi
 chmod 600 secrets/cpamp-admin-key secrets/cpa-management-key 2>/dev/null || true
 
 # 4. 数据卷（历史用量统计）

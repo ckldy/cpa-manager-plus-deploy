@@ -23,8 +23,9 @@ cp -a /root/cpa-manager-plus/compose.yaml "$BK/" 2>/dev/null || echo "  (跳过 
 cp -a /root/cpa-manager-plus/cliproxyapi/config.yaml "$BK/" 2>/dev/null || echo "  (跳过 config.yaml)"
 cp -a /root/cpa-manager-plus/secrets "$BK/" 2>/dev/null || echo "  (跳过 secrets)"
 
-# 2. 插件二进制（auths 里的登录 token 有时效，不打包，新机建议重新扫码登录）
+# 2. 插件二进制 + 第三方账号登录态(auths)
 cp -a /root/cpa-manager-plus/cliproxyapi/plugins "$BK/" 2>/dev/null || echo "  (跳过 plugins)"
+cp -a /root/cpa-manager-plus/cliproxyapi/auths "$BK/" 2>/dev/null || echo "  (跳过 auths — 登录态可能已过期)"
 
 # 3. 数据卷（usage.sqlite + data.key —— 保留历史用量统计）
 docker run --rm \

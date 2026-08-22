@@ -111,8 +111,8 @@ cd cpa-manager-plus-deploy
 # 输出: /root/backups/cpa-full-<时间戳>.tar.gz[.enc]
 ```
 
-备份内容：`.env` / `compose.yaml` / `config.yaml` / `secrets/` / `plugins/` / 数据卷（usage.sqlite + data.key）。
-> 不含 `auths/` 里的第三方登录 token —— 它们有时效，新机建议重新扫码登录。
+备份内容：`.env` / `compose.yaml` / `config.yaml` / `secrets/` / `plugins/` / `auths/`（登录态）/ 数据卷（usage.sqlite + data.key）。
+> auths 里的第三方登录 token 有时效，新机还原后建议重新扫码登录。
 
 ### 新机还原
 
