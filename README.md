@@ -1,7 +1,8 @@
-# CPA-Manager-Plus 可复现部署仓库（私有）
+# CPA-Manager-Plus 可复现部署模板
 
-> 把 HK VPS 上正在运行的 CPA 系统（CLIProxyAPI + CPA-Manager-Plus 面板）固化成**可复现部署模板**。
-> 仓库内**不含任何真实密钥/凭据**，全部为 `.example` 模板；真实密钥由你在新机填写或从加密备份还原。
+> 将 CLIProxyAPI + CPA-Manager-Plus 面板这套 CPA 系统固化为**可复现部署模板**：新机 clone → 填密钥 → 一键起。
+> 仓库内**不含任何真实密钥/凭据/服务器信息**，全部为 `.example` 模板；真实密钥由你在新机自行填写。
+> 面向公开，欢迎参考部署。
 
 ## 组件与版本
 
@@ -41,19 +42,14 @@ cpa-manager-plus-deploy/
 
 前置：一台 **x86_64 Linux**（Debian/Ubuntu 均可），已装 Docker + Docker Compose。
 
-### 1. 获取仓库（私有仓库）
+### 1. 获取仓库（公开仓库，直接 clone）
 
 ```bash
-# 方式1：PAT 内嵌（推荐，用完可换）
-git clone https://<你的PAT>@github.com/ckldy/cpa-manager-plus-deploy.git
-
-# 方式2：交互式（提示用户名填 ckldy，密码填 PAT）
 git clone https://github.com/ckldy/cpa-manager-plus-deploy.git
-
-# 方式3：gh CLI
-gh repo clone ckldy/cpa-manager-plus-deploy
 cd cpa-manager-plus-deploy
 ```
+
+> 私有使用场景可自行 fork 或设为 private；此处为公开模板仓库。
 
 ### 2. 配置环境变量
 
@@ -65,9 +61,9 @@ vim .env   # 填 GITHUB_TOKEN（你的 GitHub fine-grained PAT）
 ### 3. 放好配置与密钥
 
 ```bash
-# 方式A：从加密备份还原（推荐，完整继承配置与密钥）
-./scripts/restore.sh /path/to/cpa-full-xxx.tar.gz.enc 你的口令
-# 此时第 4、5 步可跳过，直接看验证
+# 方式A：从服务器现有部署还原（完整继承配置与密钥）
+# 服务器上先跑 ./scripts/backup.sh 生成备份包，再在还原机上：
+./scripts/restore.sh /path/to/cpa-full-xxx.tar.gz
 
 # 方式B：全新安装
 mkdir -p cliproxyapi/auths cliproxyapi/logs cliproxyapi/plugins secrets
@@ -102,23 +98,22 @@ curl -H "Authorization: Bearer <你的API_KEY>" http://127.0.0.1:8317/v1/models
 
 ## 二、备份与还原
 
-### 服务器上全量备份（含真实密钥）
+### 服务器上全量备份（含真实密钥，仅本地留存）
 
 ```bash
 cd cpa-manager-plus-deploy
-./scripts/backup.sh                    # 明文包
-./scripts/backup.sh '你的口令'          # 加密包（推荐，含真实密钥）
-# 输出: /root/backups/cpa-full-<时间戳>.tar.gz[.enc]
+./scripts/backup.sh
+# 输出: /root/backups/cpa-full-<时间戳>.tar.gz
 ```
 
 备份内容：`.env` / `compose.yaml` / `config.yaml` / `secrets/` / `plugins/` / `auths/`（登录态）/ 数据卷（usage.sqlite + data.key）。
+> 备份含真实密钥，请只保留在服务器/私密存储，勿上传公开仓库。
 > auths 里的第三方登录 token 有时效，新机还原后建议重新扫码登录。
 
 ### 新机还原
 
 ```bash
-./scripts/restore.sh /root/backups/cpa-full-xxx.tar.gz          # 明文
-./scripts/restore.sh /root/backups/cpa-full-xxx.tar.gz.enc 口令 # 加密
+./scripts/restore.sh /root/backups/cpa-full-xxx.tar.gz
 ```
 
 ---
@@ -128,7 +123,7 @@ cd cpa-manager-plus-deploy
 1. **真实密钥绝不上传本仓库**：`secrets/`、`*.env`、`config/config.yaml` 都在 `.gitignore`，仓库里只有 `.example` 模板。
 2. **GITHUB_TOKEN 是 GitHub PAT**：泄露=账号被操作。只在服务器 `.env` / nginx / 容器 env 里，建议用 fine-grained token 只授该用的仓库权限。
 3. **第三方账号 token 有时效**：qoderwork / workbuddy 的登录态会过期。新机**到面板【模型/凭据】重新扫码登录**最稳。
-4. **备份包含真实密钥**：加密包的口令务必牢记，丢失无法解密；明文包注意保管。
+4. **备份包含真实密钥**：明文包只保留在服务器/私密存储，勿上传公开仓库；必要时自行加密。
 
 ---
 
@@ -143,4 +138,4 @@ cd cpa-manager-plus-deploy
 
 ---
 
-*本仓库由实际运行系统逆向整理，模板与真实部署结构一致（compose 引用 `./cliproxyapi/` 目录）。*
+*本仓库由实际运行系统整理为通用模板，结构与真实部署一致（compose 引用 `./cliproxyapi/` 目录），不含任何服务器真实信息。*
