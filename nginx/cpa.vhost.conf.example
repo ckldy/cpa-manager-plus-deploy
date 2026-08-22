@@ -1,0 +1,101 @@
+# CPA nginx 反向代理模板 —— 复制为 cpa.<你的域名>.conf 后填写真实值
+# 部署位置：/www/server/panel/vhost/nginx/cpa.<你的域名>.conf（宝塔面板）
+# 敏感项说明：
+#   - server_name：改成你的域名
+#   - ssl_certificate / ssl_certificate_key：改成你的证书路径
+#   - /github-latest 里的 Authorization：填你自己的 GitHub PAT（只放服务器，绝不提交仓库）
+# 本模板已删除真实 PAT，Authorization 置空。
+
+# HTTP → HTTPS 跳转
+server {
+    listen 80;
+    server_name cpa.YOUR-DOMAIN.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name cpa.YOUR-DOMAIN.com;
+    index index.html index.htm;
+    root /www/wwwroot/cpa.YOUR-DOMAIN.com;
+
+    ssl_certificate /www/server/panel/vhost/cert/cpa.YOUR-DOMAIN.com/fullchain.pem;
+    ssl_certificate_key /www/server/panel/vhost/cert/cpa.YOUR-DOMAIN.com/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
+
+    # CPA OpenAI API → 8317
+    location /v1/ {
+        proxy_pass http://127.0.0.1:8317;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+        chunked_transfer_encoding on;
+    }
+
+    # CPAMP 面板 → 18317
+    location / {
+        proxy_pass http://127.0.0.1:18317;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 300s;
+        sub_filter_once on;
+        sub_filter_types text/html;
+        sub_filter 'https://api.github.com/repos/seakee/CPA-Manager-Plus/releases/latest' '/github-latest';
+        sub_filter '</body>' '<script src="/cpa-update-inject.js"></script></body>';
+    }
+
+    # GitHub 代理（带 token，避免浏览器 IP 限流）
+    location /github-latest {
+        proxy_pass https://api.github.com/repos/seakee/CPA-Manager-Plus/releases/latest;
+        proxy_http_version 1.1;
+        proxy_set_header Host api.github.com;
+        proxy_set_header Authorization "Bearer YOUR_GITHUB_PAT_HERE";
+        proxy_set_header Accept "application/vnd.github+json";
+        proxy_set_header User-Agent "CLIProxyAPI";
+        proxy_ssl_server_name on;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 20s;
+        proxy_buffering on;
+    }
+
+    # CPA 一键更新端点 → 本地更新服务（需面板管理密钥鉴权）
+    location /cpa-update {
+        proxy_pass http://127.0.0.1:18444/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 700s;
+        proxy_send_timeout 700s;
+    }
+
+    # 一键更新注入脚本（静态）
+    location = /cpa-update-inject.js {
+        alias /www/wwwroot/cpa.YOUR-DOMAIN.com/cpa-update-inject.js;
+        default_type application/javascript;
+    }
+
+    location /.well-known/acme-challenge/ {
+        root /www/wwwroot/cpa.YOUR-DOMAIN.com;
+    }
+}

@@ -1,0 +1,21 @@
+# ---- 密钥与敏感文件：绝不入库 ----
+secrets/*
+!secrets/.gitkeep
+*.env
+!*.env.example
+config/config.yaml
+!config/config.yaml.example
+
+# ---- 运行时数据/日志 ----
+cliproxyapi/logs/
+cliproxyapi/auths/
+cliproxyapi/plugins/
+*.log
+*.tar.gz
+*.tgz
+
+# ---- 原始参照（含真实密钥，仅本地留存，绝不入库）----
+reference/
+
+# ---- 其他 ----
+.DS_Store

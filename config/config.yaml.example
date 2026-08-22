@@ -1,0 +1,78 @@
+# CLIProxyAPI 核心配置模板 —— 复制为 config.yaml 后填写真实值
+# 服务器部署路径：/root/cpa-manager-plus/cliproxyapi/config.yaml
+# 敏感项说明：
+#   - remote-management.secret-key：面板远程管理密钥（bcrypt hash）。新装可在面板生成，或复制加密备份里的值。
+#   - api-keys：CLIProxyAPI 的 API Key（调用 /v1 用）。复制加密备份里的值，或自行生成。
+host: "0.0.0.0"
+port: 8317
+remote-management:
+  # 填写你的管理密钥 bcrypt hash（留空=面板默认/无远程管理）
+  secret-key: ""
+  allow-remote: true
+  disable-control-panel: false
+  disable-auto-update-panel: false
+  panel-github-repository: "https://github.com/seakee/CPA-Manager-Plus"
+usage-statistics-enabled: true
+redis-usage-queue-retention-seconds: 60
+auth-dir: "/root/.cli-proxy-api"
+api-keys:
+  # 填写你的 API Key，例如 "sk-xxxxxxxx"
+  - ""
+plugins:
+  enabled: true
+  dir: "plugins"
+  store-sources:
+    - "https://raw.githubusercontent.com/Sliverkiss/cpa-plugin/main/registry.json"
+  store-auth:
+    - match: "https://api.github.com"
+      type: "github-token"
+      token-env: "GITHUB_TOKEN"
+  configs:
+    workbuddy:
+      enabled: true
+      checkin_auto: true
+      lifecycle_auto: true
+      token_keepalive: true
+    qoderwork:
+      enabled: true
+    privacyfilter:
+      enabled: true
+      store:
+        id: privacyfilter
+        name: Privacy Filter
+        description: Intercepts model requests and redacts emails, phone numbers, API keys, tokens, and other secrets before they reach upstream providers, using embedded Gitleaks rules.
+        author: rheodev
+        version: 0.2.0
+        release-tag: v0.2.0
+        repository: https://github.com/rheodev/cpa-plugin-privacyfilter
+        homepage: https://github.com/rheodev/cpa-plugin-privacyfilter
+        license: MIT
+        tags:
+          - Interceptor
+          - Security
+        source-id: official
+        source-name: Official
+        source-url: https://raw.githubusercontent.com/router-for-me/CLIProxyAPI-Plugins-Store/main/registry.json
+        install:
+          type: github-release
+credential-concurrency:
+  cpa-heartbeat-timeout: 3s
+  cpa-cancel-bound: 5s
+  reclaim-grace: 5s
+  cleanup-interval: 5s
+  release-flush-interval: 250ms
+  release-max-backoff: 2s
+  busy-retry-min: 250ms
+  busy-retry-max: 1s
+  max-limit: 1000000
+credential-in-flight:
+  snapshot-interval: 2s
+  stale-after: 10s
+  max-part-bytes: 262144
+  max-part-count: 64
+  max-revision-bytes: 16777216
+  max-aggregate-groups: 100000
+  max-details: 10000
+  max-string-bytes: 256
+  staging-retention: 1m
+ws-auth: true
