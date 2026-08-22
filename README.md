@@ -14,6 +14,28 @@
 
 > 镜像 tag 用 `latest`，版本会漂移。出问题时按上面记录回滚到对应 tag。
 
+## 🚀 快速部署（curl | bash，全新机器推荐）
+
+前置：x86_64 Linux（Debian/Ubuntu），已装 Docker + Compose v2。
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ckldy/cpa-manager-plus-deploy/main/scripts/bootstrap.sh | bash
+```
+
+脚本会：下载仓库 → 解压到 `/opt/cpa-manager-plus` → 自动生成缺失的 `.env` / `config.yaml`（含随机 API Key） / `secrets` → `docker compose up -d`。
+
+安装完成末尾会打印**你的 API Key**（仅本次显示），请立即保存。之后：
+
+```bash
+# 验证
+curl -H "Authorization: Bearer <API Key>" http://127.0.0.1:8317/v1/models
+# 面板（浏览器）
+# http://<服务器IP>:18317  → 登录后到【模型/凭据】扫码登录 workbuddy / qoderwork
+```
+
+> 从**现有部署迁移**（带原密钥）请看下面「一、手动安装」或「二、备份与还原」。
+> `curl | bash` 会执行远程脚本，请确认来源为本仓库 raw 链接后再运行。
+
 ## 目录结构
 
 ```
@@ -29,10 +51,11 @@ cpa-manager-plus-deploy/
 │   ├── cpa-update.service
 │   └── cpa-update-inject.js
 ├── scripts/
-│   ├── install.sh                   # 一键安装
-│   ├── backup.sh                    # 服务器全量备份（可选加密）
-│   ├── restore.sh                   # 新机还原
-│   └── setup-update-service.sh      # 安装一键更新服务（可选）
+│   ├── bootstrap.sh               # curl|bash 一键部署引导（下载仓库→自动安装）
+│   ├── install.sh                 # 一键安装（--auto 自动生成密钥）
+│   ├── backup.sh                  # 服务器全量备份（可选加密）
+│   ├── restore.sh                 # 新机还原
+│   └── setup-update-service.sh    # 安装一键更新服务（可选）
 └── secrets/                         # gitignore；新机放真实密钥
 ```
 
