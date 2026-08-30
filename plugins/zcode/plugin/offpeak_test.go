@@ -207,6 +207,62 @@ func TestOffPeakExpiredTicketRetriedOnceButRunNeverReplayed(t *testing.T) {
 	}
 }
 
+func TestOffPeakStatusSelectsMatchingTicket(t *testing.T) {
+	e := mustOffPeakExecution(t)
+	var runs int
+	do := func(_ context.Context, _ pluginapi.HostHTTPClient, _ string, req pluginapi.HTTPRequest) (pluginapi.HTTPResponse, error) {
+		switch {
+		case strings.HasSuffix(req.URL, "/ticket/availability"):
+			return jsonHTTP(200, `{"can_take_number":true}`), nil
+		case strings.HasSuffix(req.URL, "/ticket"):
+			return jsonHTTP(200, `{"ticket_id":"t1","state":"queued"}`), nil
+		case strings.HasSuffix(req.URL, "/ticket/status"):
+			return jsonHTTP(200, `{"tickets":[{"ticket_id":"other","state":"expired"},{"ticket_id":"t1","state":"active"}]}`), nil
+		case strings.HasSuffix(req.URL, "/anthropic/v1/messages"):
+			runs++
+			if req.Headers.Get("X-Off-Peak-Ticket-Id") != "t1" {
+				t.Fatalf("run used wrong ticket: %q", req.Headers.Get("X-Off-Peak-Ticket-Id"))
+			}
+			return jsonHTTP(200, `{"id":"msg"}`), nil
+		case strings.HasSuffix(req.URL, "/ticket/t1/settle"):
+			return jsonHTTP(200, ``), nil
+		default:
+			return pluginapi.HTTPResponse{}, errors.New("unexpected request")
+		}
+	}
+	_, transitions, err := e.Execute(context.Background(), nil, "", do, func(time.Duration) error { return nil })
+	if err != nil || runs != 1 || strings.Join(stateStrings(transitions), ",") != "pending,running,succeeded" {
+		t.Fatalf("err=%v runs=%d transitions=%v", err, runs, transitions)
+	}
+}
+
+func TestOffPeakRejectsStatusWithoutMatchingTicket(t *testing.T) {
+	e := mustOffPeakExecution(t)
+	var runs, settles int
+	do := func(_ context.Context, _ pluginapi.HostHTTPClient, _ string, req pluginapi.HTTPRequest) (pluginapi.HTTPResponse, error) {
+		switch {
+		case strings.HasSuffix(req.URL, "/ticket/availability"):
+			return jsonHTTP(200, `{"can_take_number":true}`), nil
+		case strings.HasSuffix(req.URL, "/ticket"):
+			return jsonHTTP(200, `{"ticket_id":"t1","state":"queued"}`), nil
+		case strings.HasSuffix(req.URL, "/ticket/status"):
+			return jsonHTTP(200, `{"tickets":[{"ticket_id":"other","state":"active"}]}`), nil
+		case strings.HasSuffix(req.URL, "/anthropic/v1/messages"):
+			runs++
+			return jsonHTTP(200, `{"id":"msg"}`), nil
+		case strings.HasSuffix(req.URL, "/ticket/t1/settle"):
+			settles++
+			return jsonHTTP(200, ``), nil
+		default:
+			return pluginapi.HTTPResponse{}, errors.New("unexpected request")
+		}
+	}
+	_, transitions, err := e.Execute(context.Background(), nil, "", do, func(time.Duration) error { return nil })
+	if err == nil || !strings.Contains(err.Error(), "malformed status") || runs != 0 || settles != 1 || transitions[len(transitions)-1].State != offPeakFailed {
+		t.Fatalf("err=%v runs=%d settles=%d transitions=%v", err, runs, settles, transitions)
+	}
+}
+
 func TestOffPeakRunUsesRemainingTotalContext(t *testing.T) {
 	e := mustOffPeakExecution(t)
 	e.Config.Timeout = time.Minute
