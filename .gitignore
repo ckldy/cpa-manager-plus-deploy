@@ -13,6 +13,18 @@ cliproxyapi/plugins/
 *.log
 *.tar.gz
 *.tgz
+*.so
+*.a
+*.o
+*.h
+node_modules/
+.env
+.env.*
+!.env.example
+**/auths/
+**/credentials/
+**/*credential*.json
+**/*token*.json
 
 # ---- 原始参照（含真实密钥，仅本地留存，绝不入库）----
 reference/

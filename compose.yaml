@@ -15,6 +15,23 @@ services:
       - ./cliproxyapi/logs:/CLIProxyAPI/logs
       - ./cliproxyapi/plugins:/CLIProxyAPI/plugins
 
+  zcode-solver:
+    build:
+      context: ./plugins/zcode/solver
+    restart: unless-stopped
+    expose:
+      - "8777"
+    environment:
+      CAPTCHA_FORCE_GLOBAL_ALIAS: "1"
+      CAPTCHA_WINDOW_REUSE: "1"
+      SOLVER_HOST: "0.0.0.0"
+      SOLVER_PORT: "8777"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8777/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+
   cpa-manager-plus:
     image: ${CPAMP_IMAGE}
     restart: unless-stopped

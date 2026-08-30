@@ -8,9 +8,10 @@
 
 | 组件 | 镜像 | 本机当前版本 | 端口 |
 |---|---|---|---|
-| CLIProxyAPI（内核） | `eceasy/cli-proxy-api:latest` | v7.2.139 | 8317 |
-| CPA-Manager-Plus（面板） | `seakee/cpa-manager-plus:latest` | v1.12.2 | 18317 |
-| 插件 | workbuddy / qoderwork / privacyfilter | — | — |
+| CLIProxyAPI（定制内核） | `${CPA_IMAGE}`（默认上游；生产定制镜像需人工构建） | 以镜像清单为准 | 8317 |
+| CPA-Manager-Plus（面板） | `seakee/cpa-manager-plus:latest` | 滚动更新 | 18317 |
+| ZCode Solver | `plugins/zcode/solver` 本地构建 | 源码随仓库 | 仅容器内 8777 |
+| 插件 | zcode / bai / qoderwork / workbuddy / privacyfilter | 各自独立目录 | — |
 
 > 镜像 tag 用 `latest`，版本会漂移。出问题时按上面记录回滚到对应 tag。
 
@@ -43,7 +44,13 @@ cpa-manager-plus-deploy/
 ├── compose.yaml                     # 双容器编排（端口/镜像走 .env）
 ├── .env.example                     # 环境变量模板（无真实值）
 ├── .gitignore                       # 屏蔽 secrets/ *.env 等
-├── config/config.yaml.example       # 内核配置模板（无 api-key/密钥）
+├── plugins/                         # 每个插件一个独立目录
+│   ├── zcode/                       # Go 插件 + 独立 solver
+│   ├── bai/
+│   ├── qoderwork/
+│   ├── workbuddy/
+│   └── privacyfilter/
+├── config/config.yaml.example       # 内核配置模板（高风险开关默认关闭）
 ├── nginx/cpa.vhost.conf.example     # nginx 反代模板（脱敏域名 + 删 PAT）
 ├── update/                          # 一键更新服务（可选组件，无密钥）
 │   ├── update.sh
@@ -143,14 +150,22 @@ cd cpa-manager-plus-deploy
 
 ## 三、安全说明（必读）
 
-1. **真实密钥绝不上传本仓库**：`secrets/`、`*.env`、`config/config.yaml` 都在 `.gitignore`，仓库里只有 `.example` 模板。
+1. **真实密钥绝不上传本仓库**：`secrets/`、`*.env`、运行态 `config.yaml`、`auths/`、日志与编译产物都必须排除；仓库里只有源码和 `.example` 模板。
 2. **GITHUB_TOKEN 是 GitHub PAT**：泄露=账号被操作。只在服务器 `.env` / nginx / 容器 env 里，建议用 fine-grained token 只授该用的仓库权限。
 3. **第三方账号 token 有时效**：qoderwork / workbuddy 的登录态会过期。新机**到面板【模型/凭据】重新扫码登录**最稳。
 4. **备份包含真实密钥**：明文包只保留在服务器/私密存储，勿上传公开仓库；必要时自行加密。
 
 ---
 
-## 四、故障排查
+## 四、更新策略
+
+普通更新器**只更新面板和 solver 基础镜像**，不会覆盖 CPA 内核。若 `CPA_IMAGE` 是 `local/*`、`*custom*` 或开发构建，必须先基于新版核心重新合并插件宿主改造、测试并保留回滚镜像，再人工升级。不要对定制核心执行无差别 `docker compose pull && docker compose up -d`。
+
+ZCode 的动态路由、付费回退、双凭据保留、签名重放、Off-Peak、自动领取与验证码求解默认全部关闭；需要时必须逐项审核后手工启用。
+
+---
+
+## 五、故障排查
 
 | 现象 | 排查 |
 |---|---|

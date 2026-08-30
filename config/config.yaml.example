@@ -35,6 +35,21 @@ plugins:
       token_keepalive: true
     qoderwork:
       enabled: true
+    bai:
+      enabled: true
+    zcode:
+      enabled: true
+      route_mode: "free-first"
+      strict_route: "coding-plan"
+      captcha_solver_url: "http://zcode-solver:8777"
+      captcha_solver_enabled: false
+      dynamic_routing_active: false
+      client_signing_enabled: false
+      client_signing_allow_unsigned_chat_replay: false
+      retain_dual_credentials: false
+      allow_paid_fallback: false
+      off_peak_enabled: false
+      start_plan_auto_claim: false
     privacyfilter:
       enabled: true
       store:
