@@ -46,22 +46,34 @@ func cpaToUpstreamKey(cpaModel string) string {
 }
 
 // openAIMessage is one message in the OpenAI chat completion format.
+// Tool-history fields (tool_calls / tool_call_id) are preserved verbatim so
+// the Qoder upstream can deserialize multi-turn agent conversations: without
+// tool_call_id on a `tool` message the gateway returns
+// "messages[i]: missing field `tool_call_id`" → provider_error → empty_stream.
 type openAIMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string          `json:"role"`
+	Content    string          `json:"content"`
+	ToolCallID string          `json:"tool_call_id,omitempty"`
+	ToolCalls  json.RawMessage `json:"tool_calls,omitempty"`
 }
 
 // UnmarshalJSON accepts legacy string content and OpenAI content-part arrays.
 // QoderWork is text-only, therefore text/input_text/output_text parts are joined.
 func (m *openAIMessage) UnmarshalJSON(data []byte) error {
 	var raw struct {
-		Role    string          `json:"role"`
-		Content json.RawMessage `json:"content"`
+		Role       string          `json:"role"`
+		Content    json.RawMessage `json:"content"`
+		ToolCallID string          `json:"tool_call_id"`
+		ToolCalls  json.RawMessage `json:"tool_calls"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
 	m.Role = raw.Role
+	m.ToolCallID = raw.ToolCallID
+	if len(raw.ToolCalls) > 0 && string(raw.ToolCalls) != "null" {
+		m.ToolCalls = append(json.RawMessage(nil), raw.ToolCalls...)
+	}
 	// Messages without a content field (e.g. assistant tool_calls-only turns)
 	// unmarshal to a nil RawMessage; treat absent/null content as empty text.
 	if len(raw.Content) == 0 || string(raw.Content) == "null" {
@@ -94,9 +106,11 @@ func (m *openAIMessage) UnmarshalJSON(data []byte) error {
 
 // openAIRequest is the CPA-facing chat completion request.
 type openAIRequest struct {
-	Model    string          `json:"model"`
-	Messages []openAIMessage `json:"messages"`
-	Stream   bool            `json:"stream"`
+	Model      string          `json:"model"`
+	Messages   []openAIMessage `json:"messages"`
+	Stream     bool            `json:"stream"`
+	Tools      json.RawMessage `json:"tools"`
+	ToolChoice json.RawMessage `json:"tool_choice"`
 }
 
 // extractLatestUserPrompt returns the content of the last user message.
@@ -162,12 +176,22 @@ func buildQoderBody(req *openAIRequest, modelKey, userType string) ([]byte, erro
 			}
 		}
 	}
-	// Append the actual conversation
+	// Append the actual conversation. Tool-history fields (tool_calls on
+	// assistant turns, tool_call_id on tool turns) are forwarded verbatim so
+	// the gateway can deserialize agent multi-turn conversations (otherwise it
+	// rejects with "missing field `tool_call_id`" → provider_error).
 	for _, m := range req.Messages {
-		systemMsgs = append(systemMsgs, map[string]any{
+		out := map[string]any{
 			"role":    m.Role,
 			"content": m.Content,
-		})
+		}
+		if m.ToolCallID != "" {
+			out["tool_call_id"] = m.ToolCallID
+		}
+		if len(m.ToolCalls) > 0 {
+			out["tool_calls"] = m.ToolCalls
+		}
+		systemMsgs = append(systemMsgs, out)
 	}
 	base["messages"] = systemMsgs
 
@@ -179,6 +203,27 @@ func buildQoderBody(req *openAIRequest, modelKey, userType string) ([]byte, erro
 			biz["name"] = prompt[:30]
 		} else {
 			biz["name"] = prompt
+		}
+	}
+
+	// Client tools: when the caller declares its own OpenAI tool list, replace
+	// the template's baked-in Qoder CLI tools with the client tools. Verified
+	// against the live gateway: the model then emits tool_calls for the client
+	// tool names (instead of ignoring the client and using Qoder's built-ins),
+	// enabling the host to execute tools and round-trip results. When the
+	// client sends no tools, the template's built-in tool list is left as-is.
+	if len(req.Tools) > 0 && string(req.Tools) != "null" {
+		var tools []any
+		if err := json.Unmarshal(req.Tools, &tools); err == nil && len(tools) > 0 {
+			base["tools"] = tools
+		}
+	}
+	// tool_choice passthrough (auto / none / {"type":"function",...}) for
+	// strict clients. Omitempty-style: only set when present and non-null.
+	if len(req.ToolChoice) > 0 && string(req.ToolChoice) != "null" {
+		var choice any
+		if err := json.Unmarshal(req.ToolChoice, &choice); err == nil {
+			base["tool_choice"] = choice
 		}
 	}
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -42,7 +43,7 @@ func mappingForTest(from, to string) map[string]string {
 
 func TestExecutorResolveCallCountAndModes(t *testing.T) {
 	useExplicitPaidRouteForTest(t)
-	storage, _ := json.Marshal(authStorage{APIKey: "test-api-key"})
+	storage, _ := json.Marshal(authStorage{APIKey: "api-key-12345678901234567890"})
 
 	t.Run("sync observe", func(t *testing.T) {
 		useEndpointRouterForTest(t, routingObserveMode, mappingForTest(apiKeyUpstreamURL, "https://api.z.ai/routed"))
@@ -170,6 +171,31 @@ func TestForceStreamFieldSetsCorrectValue(t *testing.T) {
 	// Malformed JSON should pass through
 	if got := forceStreamField([]byte(`not-json`), true); string(got) != "not-json" {
 		t.Fatalf("malformed passthrough=%q", got)
+	}
+}
+
+func TestNormalizeAnthropicNonStreamResponseConvertsStandardJSONToSSE(t *testing.T) {
+	in := []byte(`{"id":"msg_test","type":"message","role":"assistant","model":"glm-test","content":[{"type":"thinking","thinking":"internal reasoning"},{"type":"text","text":"OK"}],"stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":2}}`)
+	got, err := normalizeAnthropicNonStreamResponse(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded := string(got)
+	for _, want := range []string{
+		`"type":"message_start"`,
+		`"id":"msg_test"`,
+		`"model":"glm-test"`,
+		`"type":"thinking_delta"`,
+		`"thinking":"internal reasoning"`,
+		`"type":"text_delta"`,
+		`"text":"OK"`,
+		`"stop_reason":"end_turn"`,
+		`"input_tokens":10`,
+		`"output_tokens":2`,
+	} {
+		if !strings.Contains(encoded, want) {
+			t.Fatalf("normalized response missing %q: %s", want, encoded)
+		}
 	}
 }
 
@@ -340,7 +366,7 @@ func TestRewritePayloadModelMapsNativeNames(t *testing.T) {
 func TestJWTExplicitlyWinsOverAPIKey(t *testing.T) {
 	storage, _ := json.Marshal(authStorage{
 		ZCodeJWTToken:       "jwt-token",
-		APIKey:              "test-api-key",
+		APIKey:              "api-key-12345678901234567890",
 		CaptchaVerifyParam:  "verify-param",
 		CaptchaVerifyRegion: "sgp",
 	})
@@ -359,19 +385,23 @@ func TestJWTExplicitlyWinsOverAPIKey(t *testing.T) {
 	}
 }
 
-func TestFreeFirstRejectsAPIKeyOnlyWithoutExplicitPaidRoute(t *testing.T) {
+func TestAutoUsesCodingPlanWhenOnlyAPIKeyIsAvailable(t *testing.T) {
 	routes.Lock()
 	old := routes.config
-	routes.config = routeConfig{Mode: "free-first", StrictRoute: "coding-plan"}
+	routes.config = routeConfig{Mode: "auto", StrictRoute: "coding-plan"}
 	routes.Unlock()
 	defer func() {
 		routes.Lock()
 		routes.config = old
 		routes.Unlock()
 	}()
-	storage, _ := json.Marshal(authStorage{APIKey: "test-api-key", Provider: "zai"})
-	if _, err := resolveCredential(storage); err == nil || !strings.Contains(err.Error(), "explicitly") {
-		t.Fatalf("API-key-only free-first route should be rejected: %v", err)
+	storage, _ := json.Marshal(authStorage{APIKey: "api-key-12345678901234567890", Provider: "zai"})
+	credential, err := resolveCredential(storage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if credential.CodingPlan || credential.URL != apiKeyUpstreamURL {
+		t.Fatalf("unexpected auto route for API-key-only account: %+v", credential)
 	}
 }
 
@@ -386,6 +416,62 @@ func TestCredentialTargetIsHostBound(t *testing.T) {
 	bigmodel := upstreamCredential{URL: bigModelCodingUpstreamURL}
 	if err := validateCredentialTarget("https://zcode.z.ai/api/v1/test", bigmodel); err == nil {
 		t.Fatal("BigModel credential was allowed to cross into zcode.z.ai")
+	}
+}
+
+func TestAnthropicPayloadRewritePreservesHostConvertedFields(t *testing.T) {
+	payload := []byte(`{"model":"zcode-glm-4.7","stream":false,"tools":[{"name":"lookup","description":"lookup","input_schema":{"type":"object"}}],"tool_choice":{"type":"tool","name":"lookup"},"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"call_1","name":"lookup","input":{"q":"x"}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"call_1","content":"ok"}]}]}`)
+	got := forceStreamField(rewritePayloadModel(payload), true)
+	var body map[string]any
+	if err := json.Unmarshal(got, &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["model"] != "GLM-4.7" || body["stream"] != true {
+		t.Fatalf("unexpected rewritten fields: %#v", body)
+	}
+	for _, field := range []string{"tools", "tool_choice", "messages"} {
+		if _, ok := body[field]; !ok {
+			t.Fatalf("host-converted field %q was dropped", field)
+		}
+	}
+	encoded := string(got)
+	for _, want := range []string{"call_1", "tool_use", "tool_result", "tool_use_id"} {
+		if !strings.Contains(encoded, want) {
+			t.Fatalf("multi-turn tool field %q was not preserved: %s", want, encoded)
+		}
+	}
+}
+
+func TestCodingPlanCredentialPreservesCaptchaHeaders(t *testing.T) {
+	storage, err := json.Marshal(authStorage{
+		ZCodeJWTToken:       "jwt-token",
+		CaptchaVerifyParam:  "verify-param",
+		CaptchaVerifyRegion: "sgp",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	credential, err := resolveCredential(storage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !credential.CaptchaUsed {
+		t.Fatal("captcha material was not marked as present")
+	}
+	if credential.Headers.Get("X-Aliyun-Captcha-Verify-Param") != "verify-param" || credential.Headers.Get("X-Aliyun-Captcha-Verify-Region") != "sgp" {
+		t.Fatalf("captcha headers were not preserved: %#v", credential.Headers)
+	}
+}
+
+func TestSSEFramesPreserveAnthropicUsageFields(t *testing.T) {
+	input := []byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":11,\"cache_creation_input_tokens\":7,\"cache_read_input_tokens\":5}}}\n\n" +
+		"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":13,\"cache_creation_input_tokens\":7,\"cache_read_input_tokens\":5}}\n\n")
+	frames := frameSSEPayload(input)
+	joined := string(bytes.Join(frames, nil))
+	for _, want := range []string{"message_start", "message_delta", "input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("SSE field %q was not preserved: %s", want, joined)
+		}
 	}
 }
 
@@ -412,7 +498,7 @@ func TestJWTHeadersIncludeCaptchaWhenProvided(t *testing.T) {
 func TestExecuteAPIKeyWithoutSerializedHTTPClient(t *testing.T) {
 	useExplicitPaidRouteForTest(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get("x-api-key"); got != "test-api-key" {
+		if got := r.Header.Get("x-api-key"); got != "api-key-12345678901234567890" {
 			t.Errorf("x-api-key=%q", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -424,7 +510,7 @@ func TestExecuteAPIKeyWithoutSerializedHTTPClient(t *testing.T) {
 	apiKeyUpstreamURL = server.URL
 	defer func() { apiKeyUpstreamURL = oldURL }()
 
-	storage, _ := json.Marshal(authStorage{APIKey: "test-api-key"})
+	storage, _ := json.Marshal(authStorage{APIKey: "api-key-12345678901234567890"})
 	raw, _ := json.Marshal(pluginapi.ExecutorRequest{
 		Payload:     []byte(`{"model":"zcode-glm-5.1","messages":[]}`),
 		StorageJSON: storage,
@@ -468,7 +554,7 @@ func TestExecuteUsesHostHTTPCallbackFromRPCRequest(t *testing.T) {
 		})
 	}
 
-	storage, _ := json.Marshal(authStorage{APIKey: "test-api-key"})
+	storage, _ := json.Marshal(authStorage{APIKey: "api-key-12345678901234567890"})
 	raw, _ := json.Marshal(rpcExecutorRequest{
 		ExecutorRequest: pluginapi.ExecutorRequest{
 			Payload:     []byte(`{"model":"zcode-glm-5.1","messages":[]}`),
@@ -532,7 +618,7 @@ func TestExecuteStreamUsesHostBridges(t *testing.T) {
 	}
 
 	useEndpointRouterForTest(t, routingActiveMode, mappingForTest(apiKeyUpstreamURL, "https://api.z.ai/routed"))
-	storage, _ := json.Marshal(authStorage{APIKey: "test-api-key"})
+	storage, _ := json.Marshal(authStorage{APIKey: "api-key-12345678901234567890"})
 	raw, _ := json.Marshal(rpcExecutorRequest{
 		ExecutorRequest: pluginapi.ExecutorRequest{
 			Payload:     []byte(`{"model":"zcode-glm-5.1","messages":[],"stream":true}`),
@@ -601,7 +687,7 @@ func TestExecuteReturnsErrorForUpstreamFailure(t *testing.T) {
 	oldURL := apiKeyUpstreamURL
 	apiKeyUpstreamURL = server.URL
 	defer func() { apiKeyUpstreamURL = oldURL }()
-	storage, _ := json.Marshal(authStorage{APIKey: "test-api-key"})
+	storage, _ := json.Marshal(authStorage{APIKey: "api-key-12345678901234567890"})
 	raw, _ := json.Marshal(pluginapi.ExecutorRequest{Payload: []byte(`{"model":"zcode-glm-5.1","messages":[]}`), StorageJSON: storage})
 	if _, err := handleExecutorExecute(raw); err == nil {
 		t.Fatal("upstream 401 was returned as a successful executor payload")
@@ -623,12 +709,26 @@ func TestZCodeModelsIncludeCurrentBigModelCatalog(t *testing.T) {
 	for _, model := range models {
 		byID[model.ID] = model
 	}
-	for _, id := range []string{"zcode-glm-5.3", "zcode-glm-5.3-flash"} {
+
+	expected := map[string]int64{
+		"zcode-glm-4.5-air":   200000,
+		"zcode-glm-4.6":       200000,
+		"zcode-glm-4.6v":      200000,
+		"zcode-glm-4.7":       200000,
+		"zcode-glm-5":         200000,
+		"zcode-glm-5-turbo":   200000,
+		"zcode-glm-5v-turbo":  200000,
+		"zcode-glm-5.1":       200000,
+		"zcode-glm-5.2":       1000000,
+		"zcode-glm-5.3":       1000000,
+		"zcode-glm-5.3-flash": 1000000,
+	}
+	for id, contextLength := range expected {
 		m, ok := byID[id]
 		if !ok {
 			t.Fatalf("missing %s", id)
 		}
-		if m.ContextLength != 1000000 || m.MaxCompletionTokens != 128000 {
+		if m.ContextLength != contextLength || m.MaxCompletionTokens != 128000 {
 			t.Fatalf("wrong limits for %s: %#v", id, m)
 		}
 	}

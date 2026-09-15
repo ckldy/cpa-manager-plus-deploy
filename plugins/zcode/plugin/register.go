@@ -15,14 +15,13 @@ func pluginRegistration() registration {
 		SchemaVersion: pluginabi.SchemaVersion,
 		Metadata: pluginapi.Metadata{
 			Name:             "zcode",
-			Version:          "0.6.11",
+			Version:          "0.6.12",
 			Author:           "ckldy",
 			GitHubRepository: "https://github.com/ckldy/cpa-plugin-zcode",
 			Logo:             "https://raw.githubusercontent.com/ckldy/cpa-plugin-zcode/main/logo.png",
 			ConfigFields: []pluginapi.ConfigField{
-				{Name: "route_mode", Type: pluginapi.ConfigFieldTypeEnum, EnumValues: []string{"free-first", "paid-first", "strict"}, Description: "Credential route policy; defaults to free-first without paid fallback."},
-				{Name: "strict_route", Type: pluginapi.ConfigFieldTypeEnum, EnumValues: []string{"coding-plan", "api-key"}, Description: "Route used in strict mode."},
-				{Name: "allow_paid_fallback", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Allow free-first mode to consume API Key balance after confirmed Coding Plan exhaustion."},
+				{Name: "route_mode", Type: pluginapi.ConfigFieldTypeEnum, EnumValues: []string{"auto", "coding-plan", "start-plan"}, Description: "套餐路由：自动选择、正式 Coding Plan 或体验 Start Plan；默认自动且不允许付费回退。"},
+				{Name: "allow_paid_fallback", Type: pluginapi.ConfigFieldTypeBoolean, Description: "体验套餐不可用或额度耗尽时是否允许回退到可能产生费用的 Coding Plan；默认关闭。"},
 				{Name: "retain_dual_credentials", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Allow OAuth to retain both JWT and API Key for route switching."},
 				{Name: "dynamic_routing_active", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Actively apply validated dynamic endpoint mappings; safe default is observe-only."},
 				{Name: "client_signing_enabled", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Enable V4 client signing; disabled by default."},
@@ -74,13 +73,18 @@ func zcodeModels() []pluginapi.ModelInfo {
 	flash.SupportedInputModalities = []string{"text", "image"}
 	offPeak := mk("offpeak-glm-4.5-flash", 131072, 98304, "ZCode Off-Peak GLM-4.5 Flash (实验性·默认关闭)")
 	return []pluginapi.ModelInfo{
-		mk("glm-5.3", 1000000, 128000, "ZCode GLM-5.3"),
+		mk("glm-4.5-air", 200000, 128000, "ZCode GLM-4.5 Air"),
 		mk("glm-4.5-flash", 131072, 98304, "ZCode GLM-4.5 Flash (免费直通)"),
-		offPeak,
+		mk("glm-4.6", 200000, 128000, "ZCode GLM-4.6"),
+		mk("glm-4.6v", 200000, 128000, "ZCode GLM-4.6V"),
+		mk("glm-4.7", 200000, 128000, "ZCode GLM-4.7"),
+		mk("glm-5", 200000, 128000, "ZCode GLM-5"),
+		mk("glm-5-turbo", 200000, 128000, "ZCode GLM-5 Turbo"),
+		mk("glm-5v-turbo", 200000, 128000, "ZCode GLM-5V Turbo"),
+		mk("glm-5.1", 200000, 128000, "ZCode GLM-5.1"),
+		mk("glm-5.2", 1000000, 128000, "ZCode GLM-5.2"),
+		mk("glm-5.3", 1000000, 128000, "ZCode GLM-5.3"),
 		flash,
-		mk("glm-5.2", 1000000, 128000, "ZCode GLM-5.2 (兼容)"),
-		mk("glm-5.1", 1000000, 128000, "ZCode GLM-5.1 (兼容)"),
-		mk("glm-5-turbo", 1000000, 128000, "ZCode GLM-5 Turbo (兼容)"),
-		mk("glm-4.7", 1000000, 128000, "ZCode GLM-4.7 (兼容)"),
+		offPeak,
 	}
 }

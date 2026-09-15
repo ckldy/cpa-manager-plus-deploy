@@ -36,7 +36,7 @@ var routes = struct {
 	sync.RWMutex
 	config     routeConfig
 	generation uint64
-}{config: routeConfig{Mode: "free-first", StrictRoute: "coding-plan"}}
+}{config: routeConfig{Mode: "auto", StrictRoute: "coding-plan"}}
 
 func applyRouteConfig(request []byte) {
 	var lifecycle struct {
@@ -45,7 +45,7 @@ func applyRouteConfig(request []byte) {
 	if json.Unmarshal(request, &lifecycle) != nil {
 		return
 	}
-	next := routeConfig{Mode: "free-first", StrictRoute: "coding-plan"}
+	next := routeConfig{Mode: "auto", StrictRoute: "coding-plan"}
 	for _, raw := range strings.Split(string(lifecycle.ConfigYAML), "\n") {
 		parts := strings.SplitN(strings.TrimSpace(raw), ":", 2)
 		if len(parts) != 2 {
@@ -54,8 +54,19 @@ func applyRouteConfig(request []byte) {
 		key, value := strings.TrimSpace(parts[0]), strings.Trim(strings.TrimSpace(parts[1]), "\"'")
 		switch key {
 		case "route_mode":
-			if value == "free-first" || value == "paid-first" || value == "strict" {
+			switch value {
+			case "auto", "coding-plan", "start-plan":
 				next.Mode = value
+			case "free-first":
+				next.Mode = "auto"
+			case "paid-first":
+				next.Mode = "coding-plan"
+			case "strict":
+				if next.StrictRoute == "api-key" {
+					next.Mode = "coding-plan"
+				} else {
+					next.Mode = "start-plan"
+				}
 			}
 		case "strict_route":
 			if value == "coding-plan" || value == "api-key" {
@@ -95,8 +106,8 @@ func applyRouteConfig(request []byte) {
 			next.ClientSigningAllowChatReplay = value == "true"
 		case "use_free_plan":
 			if value == "false" {
-				next.Mode = "free-first"
-			} // preserve the production JWT-first default
+				next.Mode = "auto"
+			} // preserve the production trial-first default
 		case "captcha_solver_enabled":
 			next.CaptchaSolverEnabled = value == "true"
 		case "captcha_solver_url":
@@ -116,6 +127,27 @@ func applyRouteConfig(request []byte) {
 	routes.Lock()
 	routes.config = next
 	routes.generation++
+	applyRouteConfigSideEffects(next)
+	routes.Unlock()
+	ensureAutoClaim()
+	ensureCaptchaSolver()
+}
+
+// applyRouteConfigFields applies a routeConfig directly in-memory and returns the new generation.
+// Used by the save_config management handler to bypass the host PluginReconfigure round-trip.
+func applyRouteConfigFields(next routeConfig) uint64 {
+	routes.Lock()
+	routes.config = next
+	routes.generation++
+	applyRouteConfigSideEffects(next)
+	gen := routes.generation
+	routes.Unlock()
+	ensureAutoClaim()
+	ensureCaptchaSolver()
+	return gen
+}
+
+func applyRouteConfigSideEffects(next routeConfig) {
 	if next.DynamicRoutingActive {
 		_ = setEndpointRoutingMode(routingActiveMode)
 	} else {
@@ -126,9 +158,6 @@ func applyRouteConfig(request []byte) {
 	defaultSigningManager.cfg.AllowUnsignedChatReplay = next.ClientSigningAllowChatReplay
 	defaultSigningManager.mu.Unlock()
 	claimCaptchaPool.configure(next.CaptchaPoolMax, next.CaptchaPoolTTL)
-	routes.Unlock()
-	ensureAutoClaim()
-	ensureCaptchaSolver()
 }
 
 func currentRouteConfig() routeConfig { routes.RLock(); defer routes.RUnlock(); return routes.config }
@@ -162,27 +191,19 @@ func resolveCredentialCandidates(storage []byte, authID string) ([]upstreamCrede
 	jwt := func() upstreamCredential { return credentialForJWT(s) }
 	key := func() upstreamCredential { return credentialForAPIKey(s) }
 	switch cfg.Mode {
-	case "strict":
-		if cfg.StrictRoute == "api-key" {
-			if !hasKey {
-				return nil, errors.New("strict API Key route selected but api_key is missing")
-			}
-			return []upstreamCredential{key()}, nil
-		}
+	case "start-plan":
 		if !hasJWT {
-			return nil, errors.New("strict Coding Plan route selected but zcode_jwt_token is missing")
+			return nil, errors.New("start-plan route selected but zcode_jwt_token is missing")
+		}
+		if hasKey && cfg.AllowPaidFallback {
+			return []upstreamCredential{jwt(), key()}, nil
 		}
 		return []upstreamCredential{jwt()}, nil
-	case "paid-first":
-		if hasKey && hasJWT {
-			return []upstreamCredential{key(), jwt()}, nil
+	case "coding-plan":
+		if !hasKey {
+			return nil, errors.New("coding-plan route selected but api_key is missing")
 		}
-		if hasKey {
-			return []upstreamCredential{key()}, nil
-		}
-		if hasJWT {
-			return []upstreamCredential{jwt()}, nil
-		}
+		return []upstreamCredential{key()}, nil
 	default:
 		if hasJWT {
 			exhausted := false
@@ -196,7 +217,7 @@ func resolveCredentialCandidates(storage []byte, authID string) ([]upstreamCrede
 				if hasKey && cfg.AllowPaidFallback {
 					return []upstreamCredential{key()}, nil
 				}
-				return nil, errors.New("Coding Plan quota exhausted; paid fallback is disabled")
+				return nil, errors.New("start-plan quota exhausted; paid fallback is disabled")
 			}
 			if hasKey && cfg.AllowPaidFallback {
 				return []upstreamCredential{jwt(), key()}, nil
@@ -204,7 +225,7 @@ func resolveCredentialCandidates(storage []byte, authID string) ([]upstreamCrede
 			return []upstreamCredential{jwt()}, nil
 		}
 		if hasKey {
-			return nil, errors.New("only a paid API Key is available; explicitly select paid-first or strict api-key routing")
+			return []upstreamCredential{key()}, nil
 		}
 	}
 	return nil, errors.New("no usable ZCode credential for selected route")

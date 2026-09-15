@@ -181,8 +181,12 @@ func handleExecutorExecute(request []byte) ([]byte, error) {
 			continue
 		}
 		if resp.StatusCode >= http.StatusBadRequest {
+			class := classifyUpstreamStatus(resp.StatusCode, resp.Body)
 			lastErr = upstreamError(resp)
-			if i == len(payloads)-1 || !fallbackEligible(classifyUpstreamStatus(resp.StatusCode, resp.Body)) {
+			if i == len(payloads)-1 || !fallbackEligible(class) {
+				if class == "insufficient_balance" {
+					return errorEnvelopeStatus("insufficient_balance", "B.AI 余额不足，付费模型当前不可用", http.StatusPaymentRequired), nil
+				}
 				return nil, lastErr
 			}
 			continue
@@ -254,7 +258,11 @@ func handleExecutorExecuteStream(request []byte) ([]byte, error) {
 			if lastErr == nil {
 				lastErr = upstreamError(pluginapi.HTTPResponse{StatusCode: streamResp.StatusCode, Body: body})
 			}
-			if i == len(payloads)-1 || !fallbackEligible(classifyUpstreamStatus(streamResp.StatusCode, body)) {
+			class := classifyUpstreamStatus(streamResp.StatusCode, body)
+			if i == len(payloads)-1 || !fallbackEligible(class) {
+				if class == "insufficient_balance" {
+					return errorEnvelopeStatus("insufficient_balance", "B.AI 余额不足，付费模型当前不可用", http.StatusPaymentRequired), nil
+				}
 				return nil, lastErr
 			}
 			continue
@@ -309,7 +317,11 @@ func executeStreamViaHostCallback(rpcReq rpcExecutorRequest, buildRequest func([
 			} else {
 				lastErr = fmt.Errorf("bai upstream %d: %s", resp.StatusCode, truncateBody(body, 500))
 			}
-			if i == len(payloads)-1 || !fallbackEligible(classifyUpstreamStatus(resp.StatusCode, body)) {
+			class := classifyUpstreamStatus(resp.StatusCode, body)
+			if i == len(payloads)-1 || !fallbackEligible(class) {
+				if class == "insufficient_balance" {
+					return errorEnvelopeStatus("insufficient_balance", "B.AI 余额不足，付费模型当前不可用", http.StatusPaymentRequired), nil
+				}
 				return nil, lastErr
 			}
 			continue
@@ -472,6 +484,9 @@ func classifyUpstreamStatus(status int, body []byte) string {
 	if status == http.StatusPaymentRequired {
 		return "insufficient_balance"
 	}
+	if status == http.StatusBadRequest && upstreamQuotaExceeded(text) {
+		return "insufficient_balance"
+	}
 	if status == http.StatusUnauthorized || status == http.StatusForbidden {
 		return "credential_invalid"
 	}
@@ -482,4 +497,13 @@ func classifyUpstreamStatus(status int, body []byte) string {
 		return "upstream_unavailable"
 	}
 	return "bad_request"
+}
+
+// upstreamQuotaExceeded detects B.AI's credit-quota gate on non-standard
+// statuses: HTTP 400 with code insufficient_user_quota / message "credit
+// insufficient balance: balance=0 required=102 ..." (seen on glm-5.3-flash
+// since 2026-09-14). text must already be lower-cased.
+func upstreamQuotaExceeded(text string) bool {
+	return strings.Contains(text, "insufficient_user_quota") ||
+		strings.Contains(text, "credit insufficient balance")
 }

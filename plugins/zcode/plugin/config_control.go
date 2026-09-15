@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -144,4 +145,83 @@ func createConfigConfirmation(req pluginapi.ManagementRequest) pluginapi.Managem
 
 func effectiveConfigManagementResponse() pluginapi.ManagementResponse {
 	return configJSONResponse(http.StatusOK, effectiveConfigResponse{Effective: currentHighRiskConfig(), Generation: currentRouteConfigGeneration(), Source: "host PluginReconfigure"})
+}
+
+// handleSaveConfig applies configuration changes directly in-memory.
+// No confirmation token, no admin key, no host PATCH round-trip.
+// The seven high-risk fields plus route_mode and strict_route are parsed
+// from the form body and applied immediately via applyRouteConfigFields.
+func handleSaveConfig(values url.Values) pluginapi.ManagementResponse {
+	payload, mode, strictRoute, err := parseSaveConfigValues(values)
+	if err != nil {
+		return configJSONResponse(http.StatusBadRequest, map[string]any{"ok": false, "message": err.Error()})
+	}
+	cur := currentRouteConfig()
+	next := cur
+	next.Mode = mode
+	next.StrictRoute = strictRoute
+	next.DynamicRoutingActive = payload.DynamicRoutingActive
+	next.ClientSigningEnabled = payload.ClientSigningEnabled
+	next.ClientSigningAllowChatReplay = payload.ClientSigningAllowUnsignedChatReplay
+	next.RetainDual = payload.RetainDualCredentials
+	next.AllowPaidFallback = payload.AllowPaidFallback
+	next.OffPeakEnabled = payload.OffPeakEnabled
+	next.StartPlanAutoClaim = payload.StartPlanAutoClaim
+	gen := applyRouteConfigFields(next)
+	return configJSONResponse(http.StatusOK, map[string]any{
+		"ok":         true,
+		"message":    "配置已保存并生效",
+		"payload":    payload,
+		"generation": gen,
+	})
+}
+
+func parseSaveConfigValues(values url.Values) (highRiskConfigPayload, string, string, error) {
+	read := func(name string) (bool, error) {
+		value := values.Get(name)
+		if value != "true" && value != "false" {
+			return false, fmt.Errorf("%s must be true or false", name)
+		}
+		return value == "true", nil
+	}
+	var payload highRiskConfigPayload
+	var err error
+	if payload.DynamicRoutingActive, err = read("dynamic_routing_active"); err != nil {
+		return highRiskConfigPayload{}, "", "", err
+	}
+	if payload.ClientSigningEnabled, err = read("client_signing_enabled"); err != nil {
+		return highRiskConfigPayload{}, "", "", err
+	}
+	if payload.ClientSigningAllowUnsignedChatReplay, err = read("client_signing_allow_unsigned_chat_replay"); err != nil {
+		return highRiskConfigPayload{}, "", "", err
+	}
+	if payload.RetainDualCredentials, err = read("retain_dual_credentials"); err != nil {
+		return highRiskConfigPayload{}, "", "", err
+	}
+	if payload.AllowPaidFallback, err = read("allow_paid_fallback"); err != nil {
+		return highRiskConfigPayload{}, "", "", err
+	}
+	if payload.OffPeakEnabled, err = read("off_peak_enabled"); err != nil {
+		return highRiskConfigPayload{}, "", "", err
+	}
+	if payload.StartPlanAutoClaim, err = read("start_plan_auto_claim"); err != nil {
+		return highRiskConfigPayload{}, "", "", err
+	}
+	mode := values.Get("route_mode")
+	switch mode {
+	case "auto", "coding-plan", "start-plan":
+	case "free-first":
+		mode = "auto"
+	case "paid-first":
+		mode = "coding-plan"
+	case "strict":
+		if values.Get("strict_route") == "api-key" {
+			mode = "coding-plan"
+		} else {
+			mode = "start-plan"
+		}
+	default:
+		mode = "auto"
+	}
+	return payload, mode, "coding-plan", nil
 }

@@ -86,3 +86,47 @@ func TestConfigConfirmationRejectsPayloadMismatch(t *testing.T) {
 		t.Fatalf("mismatch status=%d", response.StatusCode)
 	}
 }
+
+func saveConfigValues(risk map[string]string) url.Values {
+	v := url.Values{"action": {"save_config"}}
+	v.Set("route_mode", "free-first")
+	v.Set("strict_route", "coding-plan")
+	for _, field := range highRiskConfigFields {
+		v.Set(field, risk[field])
+	}
+	return v
+}
+
+func TestSaveConfigAppliesImmediatelyNoKeyNoToken(t *testing.T) {
+	applyRouteConfig(lifecycleConfig(""))
+	before := currentRouteConfigGeneration()
+	risk := map[string]string{}
+	for _, field := range highRiskConfigFields {
+		risk[field] = "false"
+	}
+	risk["allow_paid_fallback"] = "true"
+	risk["off_peak_enabled"] = "true"
+	response := handleSaveConfig(saveConfigValues(risk))
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("save_config status=%d body=%s", response.StatusCode, response.Body)
+	}
+	if currentRouteConfigGeneration() <= before {
+		t.Fatal("save_config did not increment generation")
+	}
+	cfg := currentRouteConfig()
+	if !cfg.AllowPaidFallback || !cfg.OffPeakEnabled {
+		t.Fatalf("save_config did not apply fields: %+v", cfg)
+	}
+}
+
+func TestSaveConfigRejectsInvalidBoolean(t *testing.T) {
+	risk := map[string]string{}
+	for _, field := range highRiskConfigFields {
+		risk[field] = "false"
+	}
+	risk["allow_paid_fallback"] = "yes"
+	response := handleSaveConfig(saveConfigValues(risk))
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid boolean, got %d", response.StatusCode)
+	}
+}

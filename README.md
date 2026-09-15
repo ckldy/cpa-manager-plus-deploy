@@ -11,7 +11,7 @@
 | CLIProxyAPI（定制内核） | `${CPA_IMAGE}`（默认上游；生产定制镜像需人工构建） | 以镜像清单为准 | 8317 |
 | CPA-Manager-Plus（面板） | `seakee/cpa-manager-plus:latest` | 滚动更新 | 18317 |
 | ZCode Solver | `plugins/zcode/solver` 本地构建 | 源码随仓库 | 仅容器内 8777 |
-| 插件 | zcode / bai / qoderwork / workbuddy / privacyfilter | 各自独立目录 | — |
+| 插件 | zcode / bai / qoderwork / traework / workbuddy / privacyfilter | 各自独立目录，源码与生产二进制对应关系见 `plugins/SOURCE-MANIFEST.md` | — |
 
 > 镜像 tag 用 `latest`，版本会漂移。出问题时按上面记录回滚到对应 tag。
 
@@ -31,7 +31,7 @@ curl -fsSL https://raw.githubusercontent.com/ckldy/cpa-manager-plus-deploy/main/
 # 验证
 curl -H "Authorization: Bearer <API Key>" http://127.0.0.1:8317/v1/models
 # 面板（浏览器）
-# http://<服务器IP>:18317  → 登录后到【模型/凭据】扫码登录 workbuddy / qoderwork
+# http://<服务器IP>:18317  → 登录后到【模型/凭据】扫码/OAuth 登录 workbuddy / qoderwork / traework / zcode
 ```
 
 > 从**现有部署迁移**（带原密钥）请看下面「一、手动安装」或「二、备份与还原」。
@@ -48,6 +48,7 @@ cpa-manager-plus-deploy/
 │   ├── zcode/                       # Go 插件 + 独立 solver
 │   ├── bai/
 │   ├── qoderwork/
+│   ├── traework/
 │   ├── workbuddy/
 │   └── privacyfilter/
 ├── config/config.yaml.example       # 内核配置模板（高风险开关默认关闭）

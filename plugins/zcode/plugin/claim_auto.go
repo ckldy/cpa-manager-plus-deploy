@@ -313,7 +313,7 @@ func (s *claimAutoScheduler) claimAccount(cfg claimAutoConfig, authIndex string,
 		return claimAutoTickResult{Action: "claimed", AuthIndex: authIndex, PlanID: target.PlanID}
 	}
 	appendClaimAudit(authIndex, target.PlanID, "auto_"+result.Category, now)
-	if result.Category == "login_required" {
+	if result.Category == "login_required" || result.Category == "unusual_activity" {
 		s.setStopped()
 		return claimAutoTickResult{Action: "stopped", AuthIndex: authIndex, PlanID: target.PlanID, Message: result.Message}
 	}

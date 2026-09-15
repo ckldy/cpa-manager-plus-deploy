@@ -18,8 +18,9 @@ type envelope struct {
 }
 
 type envelopeError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code       string `json:"code"`
+	Message    string `json:"message"`
+	HTTPStatus int    `json:"http_status,omitempty"`
 }
 
 type registration struct {
@@ -171,7 +172,11 @@ func okEnvelope(result any) ([]byte, error) {
 }
 
 func errorEnvelope(code, message string) []byte {
-	raw, _ := json.Marshal(envelope{OK: false, Error: &envelopeError{Code: code, Message: message}})
+	return errorEnvelopeStatus(code, message, 0)
+}
+
+func errorEnvelopeStatus(code, message string, status int) []byte {
+	raw, _ := json.Marshal(envelope{OK: false, Error: &envelopeError{Code: code, Message: message, HTTPStatus: status}})
 	return raw
 }
 
@@ -188,6 +193,8 @@ func handleExecutorCountTokens(request []byte) ([]byte, error) {
 // /v1/models list exactly (B.AI uses dots: claude-opus-4.8); the status page
 // additionally shows the live list fetched with the stored key.
 func baiModels() []pluginapi.ModelInfo {
+	// Snapshot probe state once so model registration stays bounded during reloads.
+	probe := currentProbeSnapshot()
 	now := time.Now().Unix()
 	base := pluginapi.ModelInfo{
 		Object:                     "model",
@@ -205,7 +212,7 @@ func baiModels() []pluginapi.ModelInfo {
 		m.Name = id
 		display = strings.TrimSuffix(display, "（免押）")
 		display = strings.TrimSuffix(display, "（需充值）")
-		if probeClassForModel(id) == probeFree {
+		if entry, ok := probe.Entries[id]; ok && entry.Class == probeFree {
 			display += " (free)"
 		}
 		m.DisplayName = display

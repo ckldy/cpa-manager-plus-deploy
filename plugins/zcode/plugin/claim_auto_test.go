@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -85,7 +86,7 @@ func autoPreviewBody(plans ...string) string {
 		}
 		encoded += `{"plan_id":"` + plan + `","name":"Trial","priority":` + strconv.Itoa(i+1) + `}`
 	}
-	return `{"code":0,"data":{"plans":[` + encoded + `]}}`
+	return `{"code":0,"data":{"eligible":true,"claimable":true,"plans":[` + encoded + `]}}`
 }
 
 func autoClaimBody(code int, endsAtUnix int64) string {
@@ -120,7 +121,7 @@ func TestClaimAutoTickDisabledDoesNothing(t *testing.T) {
 func TestClaimAutoTickClaimsHighestPriorityWithPoolToken(t *testing.T) {
 	resetClaimAutoForTest(t)
 	setAutoClaimEnabled(t, true)
-	fakeAutoHost(t, map[string]authStorage{"acc": {ZCodeJWTToken: "jwt", DeviceMID: "mid"}})
+	fakeAutoHost(t, map[string]authStorage{"acc": {ZCodeJWTToken: "jwt", DeviceMID: "11111111-2222-4333-8444-555555555555"}})
 	if err := claimCaptchaPool.add("pool-param", "sgp", time.Now()); err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +156,7 @@ func TestClaimAutoTickClaimsHighestPriorityWithPoolToken(t *testing.T) {
 func TestClaimAutoTickBacksOffToServerWindowOnAlreadyClaimed(t *testing.T) {
 	resetClaimAutoForTest(t)
 	setAutoClaimEnabled(t, true)
-	fakeAutoHost(t, map[string]authStorage{"acc": {ZCodeJWTToken: "jwt", DeviceMID: "mid"}})
+	fakeAutoHost(t, map[string]authStorage{"acc": {ZCodeJWTToken: "jwt", DeviceMID: "11111111-2222-4333-8444-555555555555"}})
 	if err := claimCaptchaPool.add("pool-param", "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +182,7 @@ func TestClaimAutoTickBacksOffToServerWindowOnAlreadyClaimed(t *testing.T) {
 func TestClaimAutoTickUsesCooldownForOtherFailures(t *testing.T) {
 	resetClaimAutoForTest(t)
 	setAutoClaimEnabled(t, true)
-	fakeAutoHost(t, map[string]authStorage{"acc": {ZCodeJWTToken: "jwt", DeviceMID: "mid"}})
+	fakeAutoHost(t, map[string]authStorage{"acc": {ZCodeJWTToken: "jwt", DeviceMID: "11111111-2222-4333-8444-555555555555"}})
 	if err := claimCaptchaPool.add("pool-param", "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +210,7 @@ func TestClaimAutoTickUsesCooldownForOtherFailures(t *testing.T) {
 func TestClaimAutoTickStopsOnLoginRequired(t *testing.T) {
 	resetClaimAutoForTest(t)
 	setAutoClaimEnabled(t, true)
-	fakeAutoHost(t, map[string]authStorage{"acc": {ZCodeJWTToken: "jwt", DeviceMID: "mid"}})
+	fakeAutoHost(t, map[string]authStorage{"acc": {ZCodeJWTToken: "jwt", DeviceMID: "11111111-2222-4333-8444-555555555555"}})
 	if err := claimCaptchaPool.add("pool-param", "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +232,7 @@ func TestClaimAutoTickStopsOnLoginRequired(t *testing.T) {
 func TestClaimAutoTickNoCaptchaHoldsPollInterval(t *testing.T) {
 	resetClaimAutoForTest(t)
 	setAutoClaimEnabled(t, true)
-	fakeAutoHost(t, map[string]authStorage{"acc": {ZCodeJWTToken: "jwt", DeviceMID: "mid"}})
+	fakeAutoHost(t, map[string]authStorage{"acc": {ZCodeJWTToken: "jwt", DeviceMID: "11111111-2222-4333-8444-555555555555"}})
 	claimHTTPDo = func(ctx context.Context, _ pluginapi.HostHTTPClient, _ string, req pluginapi.HTTPRequest) (pluginapi.HTTPResponse, error) {
 		if req.Method == http.MethodGet {
 			return pluginapi.HTTPResponse{StatusCode: http.StatusOK, Body: []byte(autoPreviewBody("plan-a"))}, nil
@@ -262,7 +263,7 @@ func TestClaimAutoTickSkipsHeldAndDisabledAccounts(t *testing.T) {
 		}
 		if method == pluginabi.MethodHostAuthGet {
 			index := request.(pluginapi.HostAuthGetRequest).AuthIndex
-			return authGetJSON(t, index, authStorage{ZCodeJWTToken: "jwt", DeviceMID: "mid"}), nil
+			return authGetJSON(t, index, authStorage{ZCodeJWTToken: "jwt", DeviceMID: "11111111-2222-4333-8444-555555555555"}), nil
 		}
 		t.Fatalf("unexpected method %s", method)
 		return nil, nil
@@ -313,5 +314,33 @@ func TestClaimAutoConfigParsedFromHostYAML(t *testing.T) {
 	applyRouteConfig(lifecycleConfig(""))
 	if claimAuto.running {
 		t.Fatal("scheduler not stopped on reload without the flag")
+	}
+}
+
+func TestClaimAuto3012StopsWithoutRetry(t *testing.T) {
+	resetClaimAutoForTest(t)
+	setAutoClaimEnabled(t, true)
+	fakeAutoHost(t, map[string]authStorage{"acc": {ZCodeJWTToken: "jwt", DeviceMID: "11111111-2222-4333-8444-555555555555"}})
+	if err := claimCaptchaPool.add("pool-param", "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	claims := 0
+	claimHTTPDo = func(_ context.Context, _ pluginapi.HostHTTPClient, _ string, req pluginapi.HTTPRequest) (pluginapi.HTTPResponse, error) {
+		if req.Method == http.MethodGet {
+			return pluginapi.HTTPResponse{StatusCode: http.StatusOK, Body: []byte(autoPreviewBody("plan-a"))}, nil
+		}
+		claims++
+		return pluginapi.HTTPResponse{StatusCode: http.StatusOK, Body: []byte(autoClaimBody(3012, 0))}, nil
+	}
+	result := claimAuto.tick(time.Now())
+	if result.Action != "stopped" || !strings.Contains(result.Message, "异常活动") {
+		t.Fatalf("result=%+v", result)
+	}
+	if !claimAuto.isStopped() || claims != 1 {
+		t.Fatalf("stopped=%v claims=%d", claimAuto.isStopped(), claims)
+	}
+	again := claimAuto.tick(time.Now().Add(time.Hour))
+	if again.Action != "stopped" || claims != 1 {
+		t.Fatalf("retry occurred: result=%+v claims=%d", again, claims)
 	}
 }

@@ -351,20 +351,7 @@ func (e *offPeakExecution) Execute(parent context.Context, client pluginapi.Host
 				}
 				return fail(statusErr)
 			}
-			matched := false
-			for _, item := range batch.Tickets {
-				if item.ID == ticket.ID {
-					state = item.State
-					matched = true
-					break
-				}
-			}
-			if !matched {
-				if settleErr := settle(ticket.ID); settleErr != nil {
-					return fail(settleErr)
-				}
-				return fail(errors.New("off-peak malformed status"))
-			}
+			state = batch.Tickets[0].State
 		}
 		if expired {
 			if settleErr := settle(ticket.ID); settleErr != nil {

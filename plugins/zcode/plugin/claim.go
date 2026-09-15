@@ -69,6 +69,38 @@ type claimResult struct {
 	Data     json.RawMessage `json:"data,omitempty"`
 }
 
+func claimPlanActiveAt(plan claimPlan, now time.Time) bool {
+	timestamp := now.Unix()
+	if plan.StartsAt > 0 && timestamp < plan.StartsAt {
+		return false
+	}
+	if plan.EndsAt > 0 && timestamp >= plan.EndsAt {
+		return false
+	}
+	return plan.StartsAt > 0 || plan.EndsAt > 0
+}
+
+func normalizeTrialModelID(model string) string {
+	model = strings.TrimSpace(strings.ToLower(model))
+	model = strings.TrimPrefix(model, "zcode-")
+	return model
+}
+
+func claimPlanAllowsModel(plan claimPlan, model string) bool {
+	want := normalizeTrialModelID(model)
+	if want == "" {
+		return false
+	}
+	for _, entitlement := range plan.Entitlements {
+		for _, capability := range entitlement.Capabilities {
+			if normalizeTrialModelID(capability) == want {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 type claimPreviewSnapshot struct {
 	Preview   claimPreview
 	Refreshed time.Time
@@ -196,12 +228,31 @@ func buildClaimRequest(storage authStorage, planID string) (pluginapi.HTTPReques
 	}, nil
 }
 
+func isCanonicalUUIDv4(value string) bool {
+	if len(value) != 36 || value[8] != '-' || value[13] != '-' || value[18] != '-' || value[23] != '-' || value[14] != '4' {
+		return false
+	}
+	if value[19] != '8' && value[19] != '9' && value[19] != 'a' && value[19] != 'b' {
+		return false
+	}
+	for index, character := range value {
+		if index == 8 || index == 13 || index == 18 || index == 23 {
+			continue
+		}
+		if !((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
+
 func validateClaimStorage(storage authStorage) error {
 	if strings.TrimSpace(storage.ZCodeJWTToken) == "" {
 		return errors.New("missing zcode_jwt_token")
 	}
-	if strings.TrimSpace(storage.DeviceMID) == "" {
-		return errors.New("missing device_mid")
+	deviceMID := strings.TrimSpace(storage.DeviceMID)
+	if !isCanonicalUUIDv4(deviceMID) {
+		return errors.New("device_mid must be a canonical UUID v4")
 	}
 	return nil
 }
@@ -218,6 +269,8 @@ func validateManualClaimStorage(storage authStorage) error {
 
 func claimHeaders(storage authStorage) http.Header {
 	headers := zcodeHeaders(storage.ZCodeJWTToken, storage.CaptchaVerifyParam, storage.CaptchaVerifyRegion)
+	headers.Del("X-ZCode-Agent")
+	headers.Set("X-Platform", "linux-x64")
 	headers.Set("X-Device-Mid", strings.TrimSpace(storage.DeviceMID))
 	return headers
 }
@@ -293,6 +346,8 @@ func classifyClaimBusinessCode(code int, upstreamMessage string) (category, mess
 		category, message = "invalid_device_or_parameter", "请求参数或设备 MID 无效"
 	case 3007:
 		category, message = "captcha_failed", "验证码校验失败"
+	case 3012:
+		category, message = "unusual_activity", "检测到异常活动，已熔断该账号与套餐，禁止自动重试"
 	case 401:
 		category, message = "login_required", "登录已失效，需要重新登录"
 	default:
@@ -318,6 +373,23 @@ func getClaimPreviewSnapshot(authIndex string) (claimPreviewSnapshot, bool) {
 		return claimPreviewSnapshot{}, false
 	}
 	return snapshot, true
+}
+
+func activeTrialModelStatus(model string, now time.Time) (available bool, known bool) {
+	claimPreviews.RLock()
+	defer claimPreviews.RUnlock()
+	for _, snapshot := range claimPreviews.items {
+		if snapshot.Error != "" || now.Sub(snapshot.Refreshed) > claimPreviewTTL {
+			continue
+		}
+		known = true
+		for _, plan := range snapshot.Preview.Plans {
+			if claimPlanActiveAt(plan, now) && claimPlanAllowsModel(plan, model) {
+				return true, true
+			}
+		}
+	}
+	return false, known
 }
 
 func loadClaimStorage(authIndex string) (authStorage, error) {
@@ -400,7 +472,7 @@ func refreshClaimPreviewWithStorage(authIndex, hostCallbackID string, storage au
 
 func claimPlanInRecentPreview(authIndex, planID string) bool {
 	snapshot, ok := getClaimPreviewSnapshot(authIndex)
-	if !ok {
+	if !ok || snapshot.Error != "" || !snapshot.Preview.Eligible || !snapshot.Preview.Claimable {
 		return false
 	}
 	for _, plan := range snapshot.Preview.Plans {

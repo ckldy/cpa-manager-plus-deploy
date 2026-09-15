@@ -472,7 +472,7 @@ func checked(value bool) string {
 }
 func renderRoutePanel() string {
 	cfg := currentRouteConfig()
-	return fmt.Sprintf(`<section class="section route-panel"><div class="section-head"><div><h2>高风险功能控制面</h2><p class="section-note">值仅在宿主 PluginReconfigure 回传后视为生效。插件只验证一次性确认并返回规范化 payload，不自行持久化。</p></div><span class="state good" id="route-state">effective generation %d</span></div><form id="route-form"><div class="route-grid"><label>路由模式<select id="route-mode"><option value="free-first"%s>免费优先</option><option value="paid-first"%s>付费优先</option><option value="strict"%s>严格指定</option></select></label><label>严格模式路径<select id="strict-route"><option value="coding-plan"%s>Coding Plan</option><option value="api-key"%s>API Key</option></select></label></div><label class="toggle"><input id="dynamic-routing" type="checkbox"%s><span><b>Dynamic routing active</b><small>关闭时仅观察，不改写端点。</small></span></label><label class="toggle"><input id="client-signing" type="checkbox"%s><span><b>Client signing</b></span></label><label class="toggle"><input id="unsigned-chat-replay" type="checkbox"%s><span><b>Unsigned chat replay</b></span></label><label class="toggle"><input id="retain-dual" type="checkbox"%s><span><b>Retain dual credentials</b></span></label><label class="toggle"><input id="allow-paid" type="checkbox"%s><span><b>Paid fallback</b></span></label><label class="toggle"><input id="off-peak" type="checkbox"%s><span><b>OffPeak</b></span></label><label class="toggle"><input id="start-plan-auto-claim" type="checkbox"%s><span><b>Start Plan 自动领取</b><small>轮询周末/体验套餐预览并自动领取；每次消费一个验证码池 token。</small></span></label><label class="toggle"><input id="config-confirm" type="checkbox" required><span><b>我确认完整提交上述七个高风险字段</b><small>确认 token 一次性、五分钟有效，并绑定本次完整 payload。</small></span></label><div class="route-actions"><input id="management-key" type="password" autocomplete="current-password" placeholder="Manager 管理员密钥（仅保存在本次输入控件）"><button class="action primary" type="submit">确认、持久化并等待生效</button><span id="route-result" role="status"></span></div><div class="danger" id="paid-warning" hidden>开启付费回退可能消耗 API Key 付费余额。</div></form></section>`, currentRouteConfigGeneration(), selected(cfg.Mode, "free-first"), selected(cfg.Mode, "paid-first"), selected(cfg.Mode, "strict"), selected(cfg.StrictRoute, "coding-plan"), selected(cfg.StrictRoute, "api-key"), checked(cfg.DynamicRoutingActive), checked(cfg.ClientSigningEnabled), checked(cfg.ClientSigningAllowChatReplay), checked(cfg.RetainDual), checked(cfg.AllowPaidFallback), checked(cfg.OffPeakEnabled), checked(cfg.StartPlanAutoClaim))
+	return fmt.Sprintf(`<section class="section route-panel"><div class="section-head"><div><h2>高风险功能控制面</h2><p class="section-note">更改后立即生效，无需管理员密钥。</p></div><span class="state good" id="route-state">effective generation %d</span></div><form id="route-form"><div class="route-grid"><label>路由模式<select id="route-mode"><option value="auto"%s>自动选择</option><option value="coding-plan"%s>正式套餐</option><option value="start-plan"%s>体验套餐</option></select><small>自动模式优先使用已生效的体验套餐；付费回退默认关闭。</small></label></div><label class="toggle"><input id="dynamic-routing" type="checkbox"%s><span><b>Dynamic routing active</b><small>关闭时仅观察，不改写端点。</small></span></label><label class="toggle"><input id="client-signing" type="checkbox"%s><span><b>Client signing</b></span></label><label class="toggle"><input id="unsigned-chat-replay" type="checkbox"%s><span><b>Unsigned chat replay</b></span></label><label class="toggle"><input id="retain-dual" type="checkbox"%s><span><b>Retain dual credentials</b></span></label><label class="toggle"><input id="allow-paid" type="checkbox"%s><span><b>Paid fallback</b></span></label><label class="toggle"><input id="off-peak" type="checkbox"%s><span><b>OffPeak</b></span></label><label class="toggle"><input id="start-plan-auto-claim" type="checkbox"%s><span><b>Start Plan 自动领取</b><small>轮询周末/体验套餐预览并自动领取；每次消费一个验证码池 token。</small></span></label><div class="route-actions"><button class="action primary" type="submit">保存配置</button><span id="route-result" role="status"></span></div><div class="danger" id="paid-warning" hidden>开启付费回退可能消耗 API Key 付费余额。</div></form></section>`, currentRouteConfigGeneration(), selected(cfg.Mode, "auto"), selected(cfg.Mode, "coding-plan"), selected(cfg.Mode, "start-plan"), checked(cfg.DynamicRoutingActive), checked(cfg.ClientSigningEnabled), checked(cfg.ClientSigningAllowChatReplay), checked(cfg.RetainDual), checked(cfg.AllowPaidFallback), checked(cfg.OffPeakEnabled), checked(cfg.StartPlanAutoClaim))
 }
 
 func zcodeModelIDs() []string {
@@ -486,9 +486,9 @@ func zcodeModelIDs() []string {
 
 func renderDiagnostics(page zcodeStatusPage) string {
 	cfg := currentRouteConfig()
-	mode := map[string]string{"free-first": "免费优先", "paid-first": "付费优先", "strict": "严格指定"}[cfg.Mode]
+	mode := map[string]string{"auto": "自动选择", "coding-plan": "正式套餐", "start-plan": "体验套餐"}[cfg.Mode]
 	if mode == "" {
-		mode = "免费优先"
+		mode = "自动选择"
 	}
 	fallback, fallbackClass := "付费回退已关闭", "good"
 	if cfg.AllowPaidFallback {
@@ -641,10 +641,17 @@ func renderZCodeAccountPage(page zcodeStatusPage) []byte {
 			modelRows.WriteString(fmt.Sprintf(`<tr><td><code>%s</code></td><td><span class="state warn">%s</span></td><td><span class="state neutral">%s</span><small>%s</small></td></tr>`, model, status, poolEvidence, detail))
 			continue
 		}
-		modelRows.WriteString(fmt.Sprintf(`<tr><td><code>%s</code></td><td><span class="state neutral">已暴露</span></td><td><span class="state %s">%s</span><small>模型级独立检测尚未执行</small></td></tr>`, model, evidenceClass, poolEvidence))
+		trialAvailable, trialKnown := activeTrialModelStatus(model, time.Now())
+		routeStatus, routeClass, routeDetail := "已暴露", "neutral", "模型级独立检测尚未执行"
+		if trialAvailable {
+			routeStatus, routeClass, routeDetail = "体验套餐免费", "good", "近期套餐预览已明确声明该模型，且当前处于生效时间窗口"
+		} else if trialKnown {
+			routeStatus, routeClass, routeDetail = "体验套餐暂不可用", "warn", "近期套餐预览未发现当前生效且明确包含该模型的权益"
+		}
+		modelRows.WriteString(fmt.Sprintf(`<tr><td><code>%s</code></td><td><span class="state %s">%s</span></td><td><span class="state %s">%s</span><small>%s</small></td></tr>`, model, routeClass, routeStatus, evidenceClass, poolEvidence, routeDetail))
 	}
 	return []byte(fmt.Sprintf(`<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ZCode 账号管理</title><style>
-:root{color-scheme:dark;--bg:#11151a;--panel:#1b2026;--panel2:#22282f;--line:#303943;--text:#edf2f6;--muted:#9ba7b2;--green:#36c88a;--amber:#e4ae3a;--red:#ef726b;--blue:#69a9ff}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:1180px;margin:0 auto;padding:28px 22px 52px}.top{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;border-bottom:1px solid var(--line);padding-bottom:20px}.eyebrow{color:var(--blue);font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}.top h1{font-size:25px;margin:6px 0}.top p,.section-note{color:var(--muted);line-height:1.55;margin:0}.actions{display:flex;gap:8px;flex-wrap:wrap}.action{background:var(--panel2);border:1px solid var(--line);border-radius:7px;color:var(--text);padding:9px 12px;text-decoration:none;white-space:nowrap}.action.primary{background:#347ee6;border-color:#4c92f4}.metrics{display:grid;grid-template-columns:repeat(6,1fr);gap:1px;background:var(--line);border:1px solid var(--line);margin:22px 0}.metric{background:var(--panel);padding:15px}.metric b{display:block;font-size:23px}.metric span{display:block;color:var(--muted);font-size:12px;margin-top:5px}.section{margin-top:28px}.section-head{display:flex;justify-content:space-between;align-items:end;gap:14px;margin-bottom:12px}.section h2{font-size:17px;margin:0}.filters{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 14px}.filter{background:var(--panel2);border:1px solid var(--line);border-radius:999px;color:var(--muted);padding:8px 12px;cursor:pointer}.filter.active{background:#347ee6;border-color:#4c92f4;color:white}.filter span{margin-left:4px;font-weight:700}.account-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:14px}.account-card{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:17px;min-width:0}.card-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.card-head h3{font-size:17px;margin:0 0 5px;overflow-wrap:anywhere}.card-head p,.card-detail{color:var(--muted);font-size:12px;margin:0;overflow-wrap:anywhere}.state{display:inline-block;border-radius:999px;padding:4px 9px;font-size:12px;font-weight:700;white-space:nowrap}.good{background:#173b30;color:#75e1b0}.bad{background:#442424;color:#ffaaa5}.muted{background:#30363d;color:#bec7cf}.neutral{background:#20384d;color:#9bd2ff}.warn{background:#493916;color:#ffd57a}.chips{display:flex;gap:7px;flex-wrap:wrap;margin:16px 0}.chip{background:#2a3037;border:1px solid #3a444e;border-radius:5px;color:#cbd4db;font-size:12px;padding:5px 8px}.card-meta{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;color:var(--muted);font-size:12px;margin-bottom:15px}.card-meta b{display:block;color:var(--text);font-size:15px;margin-top:4px;overflow-wrap:anywhere}.progress-label{display:flex;justify-content:space-between;color:var(--muted);font-size:12px;margin-bottom:6px}.progress{height:8px;background:#303840;border-radius:99px;overflow:hidden}.progress i{display:block;height:100%%;border-radius:99px}.progress i.good{background:var(--green)}.progress i.warn{background:var(--amber)}.progress i.bad{background:var(--red)}.progress i.neutral,.progress i.muted{background:#65717d}.empty{background:var(--panel);border:1px dashed var(--line);border-radius:9px;color:var(--muted);padding:30px;text-align:center}.model-table{border:1px solid var(--line);background:var(--panel);overflow:auto}.model-table table{border-collapse:collapse;width:100%%;min-width:620px}.model-table th,.model-table td{text-align:left;padding:12px 14px;border-bottom:1px solid var(--line)}.model-table th{color:var(--muted);font-size:12px}.model-table tr:last-child td{border-bottom:0}.notice{border-left:3px solid var(--amber);background:#201d16;padding:14px 16px;color:var(--muted);line-height:1.65}.notice p{margin:5px 0}.hidden{display:none!important}@media(max-width:720px){main{padding:20px 14px 40px}.top{display:block}.actions{margin-top:16px}.metrics{grid-template-columns:repeat(2,1fr)}.account-grid{grid-template-columns:1fr}.card-meta{grid-template-columns:repeat(2,1fr)}.section-head{display:block}.section-note{margin-top:8px}}.route-panel{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:18px}.route-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}label{display:block;color:var(--muted);font-size:12px}select{display:block;width:100%%;margin-top:7px;padding:10px;border:1px solid var(--line);border-radius:7px;background:var(--panel2);color:var(--text)}label small{display:block;margin-top:6px;color:var(--muted);line-height:1.45}.toggle{display:flex;align-items:flex-start;gap:10px;margin-top:14px;padding:12px;border:1px solid var(--line);border-radius:7px;background:var(--panel2)}.toggle input{margin-top:3px}.toggle b{display:block;color:var(--text);font-size:14px}.route-actions{display:flex;align-items:center;gap:12px;margin-top:15px;flex-wrap:wrap}.route-actions input{min-width:260px;flex:1;padding:10px;border:1px solid var(--line);border-radius:7px;background:var(--panel2);color:var(--text)}.route-actions button,.account-actions button{cursor:pointer}.account-actions{display:flex;align-items:center;gap:10px;margin-top:14px}.account-result{font-size:12px}.danger{margin-top:12px;padding:10px 12px;border-left:3px solid var(--red);background:#2b1a1a;color:#ffaaa5}.refresh-notice{display:flex;align-items:center;gap:12px;margin-top:14px;padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}.refresh-notice b{white-space:nowrap}.refresh-notice span{color:var(--muted);font-size:12px}.refresh-notice.good{border-left:3px solid var(--green)}.refresh-notice.warn{border-left:3px solid var(--amber)}.refresh-notice.bad{border-left:3px solid var(--red)}.diagnostics{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:20px}.diagnostic-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}.diagnostic-head h2{font-size:20px;margin:5px 0 6px}.diagnostic-head p{color:var(--muted);margin:0;line-height:1.55}.diagnostic-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;margin-top:18px;background:var(--line);border:1px solid var(--line);border-radius:8px;overflow:hidden}.diagnostic-grid article{background:var(--panel2);padding:14px;min-width:0}.diagnostic-grid span,.next-step span{display:block;color:var(--muted);font-size:12px}.diagnostic-grid b{display:block;margin:6px 0;font-size:15px;overflow-wrap:anywhere}.diagnostic-grid small{display:block;color:var(--muted);line-height:1.45}.good-text{color:var(--green)!important}.warn-text{color:var(--amber)!important}.next-step{display:grid;grid-template-columns:80px 1fr;align-items:center;gap:12px;margin-top:14px;padding:13px 14px;border:1px solid var(--line);border-radius:8px}.next-step b{font-size:14px}details{margin-top:10px;color:var(--muted)}summary{cursor:pointer;padding:8px 2px;font-size:12px}.detail-body{padding:0 12px 4px;line-height:1.55;font-size:12px}.detail-body p{margin:5px 0}@media(max-width:900px){.diagnostic-grid{grid-template-columns:repeat(2,1fr)}}@media(max-width:560px){.diagnostic-grid{grid-template-columns:1fr}.diagnostic-head{display:block}.diagnostic-head .state{margin-top:12px}.next-step{grid-template-columns:1fr}}.success-text{color:var(--green)}.error-text{color:var(--red)}@media(prefers-color-scheme:light){:root{color-scheme:light;--bg:#f5f7fa;--panel:#fff;--panel2:#f3f6f9;--line:#dce3ea;--text:#1f2933;--muted:#657382;--green:#16835d;--amber:#9a6810;--red:#c43d37;--blue:#256dcc}body{background:var(--bg)}.action,.filter,.chip,.toggle,select{background:var(--panel2);border-color:var(--line);color:var(--text)}.metric,.account-card,.model-table,.route-panel{background:var(--panel)}.good{background:#dff5eb;color:#116a4b}.bad{background:#fde8e7;color:#a92f2b}.muted{background:#e9eef2;color:#52616e}.neutral{background:#e3f0fc;color:#21649f}.warn{background:#fff1cf;color:#80580e}.notice{background:#fff9e9}.danger{background:#fff0ef;color:#a92f2b}.progress{background:#e6ebef}.model-table th,.model-table td{border-color:var(--line)}}@media(max-width:720px){.route-grid{grid-template-columns:1fr}}</style></head><body><main><header class="top"><div><div class="eyebrow">Provider health</div><h1>ZCode 账号管理</h1><p>账号池、路由状态与近期请求证据。凭证内容不会显示在此页面。</p><p class="section-note">国内 BigModel：在 CPA 凭证管理中导入 <code>bigmodel-coding:你的API_KEY</code>；国际 Z.ai：继续使用 OAuth。两平台凭据严格隔离。</p></div><div class="actions"><a class="action" href="?refresh=1">刷新状态</a><a class="action" href="?refresh=claim">刷新体验套餐</a><a class="action primary" href="?refresh=quota">刷新全部额度</a></div></header>%s%s<section class="metrics"><div class="metric"><b>%d</b><span>已注册账号</span></div><div class="metric"><b>%d</b><span>可路由</span></div><div class="metric"><b>%d</b><span>不可用 / 已禁用</span></div><div class="metric"><b>%d</b><span>近期成功</span></div><div class="metric"><b>%d</b><span>近期失败</span></div><div class="metric"><b>%d</b><span>无请求证据</span></div></section><section class="section"><div class="section-head"><h2>账号池</h2><p class="section-note">状态和计数由 CPA 宿主提供；更新时间不等同于最近调用时间。</p></div><div class="filters"><button class="filter active" data-filter="all">全部 <span>%d</span></button><button class="filter" data-filter="active">可路由 <span>%d</span></button><button class="filter" data-filter="unavailable">不可用 <span>%d</span></button><button class="filter" data-filter="disabled">已禁用 <span>%d</span></button></div><div class="account-grid">%s</div></section><section class="section"><div class="section-head"><h2>模型矩阵</h2><p class="section-note">账号池证据不等同于模型级独立检测。</p></div><div class="model-table"><table><thead><tr><th>模型</th><th>CPA 路由</th><th>验证状态</th></tr></thead><tbody>%s</tbody></table></div></section>%s</main><script>document.querySelectorAll('.filter').forEach(function(button){button.addEventListener('click',function(){document.querySelectorAll('.filter').forEach(function(item){item.classList.remove('active')});button.classList.add('active');var filter=button.dataset.filter;document.querySelectorAll('.account-card').forEach(function(card){card.classList.toggle('hidden',filter!=='all'&&card.dataset.state!==filter)})})});const paid=document.getElementById('allow-paid'),warning=document.getElementById('paid-warning');function syncWarning(){warning.hidden=!paid.checked}paid.addEventListener('change',syncWarning);syncWarning();document.querySelectorAll('.account-toggle').forEach(function(button){button.addEventListener('click',async function(){const disabling=button.dataset.disable==='true',result=button.nextElementSibling,active=document.querySelectorAll('.account-card[data-state="active"]').length,key=(window.prompt('请输入 Manager 管理员密钥（仅用于本次账号切换，不会保存）')||'').trim();if(disabling&&active<=1){result.className='account-result error-text';result.textContent='至少保留一个可路由账号';return}if(!key){result.className='account-result error-text';result.textContent='已取消切换';return}button.disabled=true;result.className='account-result';result.textContent='正在切换…';try{const response=await fetch('/v0/management/auth-files/status',{method:'PATCH',headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},credentials:'same-origin',cache:'no-store',body:JSON.stringify({name:button.dataset.name,auth_index:button.dataset.authIndex,disabled:disabling})});if(!response.ok)throw new Error('HTTP '+response.status);result.className='account-result success-text';result.textContent=disabling?'账号已停用':'账号已启用';setTimeout(function(){location.reload()},500)}catch(error){button.disabled=false;result.className='account-result error-text';result.textContent=error.message.includes('401')?'管理员密钥无效':'切换失败：'+error.message}})});document.getElementById('route-form').addEventListener('submit',async function(event){event.preventDefault();const result=document.getElementById('route-result'),keyInput=document.getElementById('management-key'),key=keyInput.value.trim();if(!key||!document.getElementById('config-confirm').checked){result.className='error-text';result.textContent='请输入 Manager 管理员密钥并显式确认';return}const risk={dynamic_routing_active:document.getElementById('dynamic-routing').checked,client_signing_enabled:document.getElementById('client-signing').checked,client_signing_allow_unsigned_chat_replay:document.getElementById('unsigned-chat-replay').checked,retain_dual_credentials:document.getElementById('retain-dual').checked,allow_paid_fallback:paid.checked,off_peak_enabled:document.getElementById('off-peak').checked,start_plan_auto_claim:document.getElementById('start-plan-auto-claim').checked},query=new URLSearchParams({config_control:'confirm'});Object.keys(risk).forEach(function(name){query.set(name,String(risk[name]))});result.className='';result.textContent='正在创建一次性确认…';try{const confirmation=await fetch(location.pathname+'?'+query.toString(),{credentials:'same-origin',cache:'no-store'});if(!confirmation.ok)throw new Error('确认失败 HTTP '+confirmation.status);const confirmationBody=await confirmation.json(),form=new URLSearchParams({action:'prepare_config',confirm:'true',confirmation_token:confirmationBody.confirmation_token});Object.keys(risk).forEach(function(name){form.set(name,String(risk[name]))});const prepared=await fetch(location.pathname,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},credentials:'same-origin',cache:'no-store',body:form.toString()});if(!prepared.ok)throw new Error('验证失败 HTTP '+prepared.status);const preparedBody=await prepared.json(),before=preparedBody.generation,payload=Object.assign({route_mode:document.getElementById('route-mode').value,strict_route:document.getElementById('strict-route').value},preparedBody.payload);result.textContent='已验证，正在请求宿主持久化…';const patch=await fetch('/v0/management/plugins/zcode/config',{method:'PATCH',headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},credentials:'same-origin',cache:'no-store',body:JSON.stringify(payload)});keyInput.value='';if(!patch.ok)throw new Error('宿主 PATCH HTTP '+patch.status);result.textContent='宿主已接受，等待 PluginReconfigure…';const deadline=Date.now()+10000;while(Date.now()<deadline){await new Promise(function(resolve){setTimeout(resolve,300)});const effectiveResponse=await fetch(location.pathname+'?config_control=effective',{credentials:'same-origin',cache:'no-store'});if(!effectiveResponse.ok)continue;const effective=await effectiveResponse.json();if(effective.generation>before&&Object.keys(risk).every(function(name){return effective.effective[name]===risk[name]})){result.className='success-text';result.textContent='已生效（PluginReconfigure generation '+effective.generation+'）';return}}throw new Error('等待 PluginReconfigure 超时；未确认持久化')}catch(error){keyInput.value='';result.className='error-text';result.textContent='未持久化/未生效：'+error.message}})</script></body></html>`, renderRoutePanel(), renderRefreshNotice(page), len(page.Accounts), page.Active, page.Unavailable+page.Disabled, page.Success, page.Failed, page.NoEvidence, len(page.Accounts), page.Active, page.Unavailable, page.Disabled, cards.String(), modelRows.String(), renderDiagnostics(page)))
+:root{color-scheme:dark;--bg:#11151a;--panel:#1b2026;--panel2:#22282f;--line:#303943;--text:#edf2f6;--muted:#9ba7b2;--green:#36c88a;--amber:#e4ae3a;--red:#ef726b;--blue:#69a9ff}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:1180px;margin:0 auto;padding:28px 22px 52px}.top{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;border-bottom:1px solid var(--line);padding-bottom:20px}.eyebrow{color:var(--blue);font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}.top h1{font-size:25px;margin:6px 0}.top p,.section-note{color:var(--muted);line-height:1.55;margin:0}.actions{display:flex;gap:8px;flex-wrap:wrap}.action{background:var(--panel2);border:1px solid var(--line);border-radius:7px;color:var(--text);padding:9px 12px;text-decoration:none;white-space:nowrap}.action.primary{background:#347ee6;border-color:#4c92f4}.metrics{display:grid;grid-template-columns:repeat(6,1fr);gap:1px;background:var(--line);border:1px solid var(--line);margin:22px 0}.metric{background:var(--panel);padding:15px}.metric b{display:block;font-size:23px}.metric span{display:block;color:var(--muted);font-size:12px;margin-top:5px}.section{margin-top:28px}.section-head{display:flex;justify-content:space-between;align-items:end;gap:14px;margin-bottom:12px}.section h2{font-size:17px;margin:0}.filters{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 14px}.filter{background:var(--panel2);border:1px solid var(--line);border-radius:999px;color:var(--muted);padding:8px 12px;cursor:pointer}.filter.active{background:#347ee6;border-color:#4c92f4;color:white}.filter span{margin-left:4px;font-weight:700}.account-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:14px}.account-card{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:17px;min-width:0}.card-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.card-head h3{font-size:17px;margin:0 0 5px;overflow-wrap:anywhere}.card-head p,.card-detail{color:var(--muted);font-size:12px;margin:0;overflow-wrap:anywhere}.state{display:inline-block;border-radius:999px;padding:4px 9px;font-size:12px;font-weight:700;white-space:nowrap}.good{background:#173b30;color:#75e1b0}.bad{background:#442424;color:#ffaaa5}.muted{background:#30363d;color:#bec7cf}.neutral{background:#20384d;color:#9bd2ff}.warn{background:#493916;color:#ffd57a}.chips{display:flex;gap:7px;flex-wrap:wrap;margin:16px 0}.chip{background:#2a3037;border:1px solid #3a444e;border-radius:5px;color:#cbd4db;font-size:12px;padding:5px 8px}.card-meta{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;color:var(--muted);font-size:12px;margin-bottom:15px}.card-meta b{display:block;color:var(--text);font-size:15px;margin-top:4px;overflow-wrap:anywhere}.progress-label{display:flex;justify-content:space-between;color:var(--muted);font-size:12px;margin-bottom:6px}.progress{height:8px;background:#303840;border-radius:99px;overflow:hidden}.progress i{display:block;height:100%%;border-radius:99px}.progress i.good{background:var(--green)}.progress i.warn{background:var(--amber)}.progress i.bad{background:var(--red)}.progress i.neutral,.progress i.muted{background:#65717d}.empty{background:var(--panel);border:1px dashed var(--line);border-radius:9px;color:var(--muted);padding:30px;text-align:center}.model-table{border:1px solid var(--line);background:var(--panel);overflow:auto}.model-table table{border-collapse:collapse;width:100%%;min-width:620px}.model-table th,.model-table td{text-align:left;padding:12px 14px;border-bottom:1px solid var(--line)}.model-table th{color:var(--muted);font-size:12px}.model-table tr:last-child td{border-bottom:0}.notice{border-left:3px solid var(--amber);background:#201d16;padding:14px 16px;color:var(--muted);line-height:1.65}.notice p{margin:5px 0}.hidden{display:none!important}@media(max-width:720px){main{padding:20px 14px 40px}.top{display:block}.actions{margin-top:16px}.metrics{grid-template-columns:repeat(2,1fr)}.account-grid{grid-template-columns:1fr}.card-meta{grid-template-columns:repeat(2,1fr)}.section-head{display:block}.section-note{margin-top:8px}}.route-panel{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:18px}.route-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}label{display:block;color:var(--muted);font-size:12px}select{display:block;width:100%%;margin-top:7px;padding:10px;border:1px solid var(--line);border-radius:7px;background:var(--panel2);color:var(--text)}label small{display:block;margin-top:6px;color:var(--muted);line-height:1.45}.toggle{display:flex;align-items:flex-start;gap:10px;margin-top:14px;padding:12px;border:1px solid var(--line);border-radius:7px;background:var(--panel2)}.toggle input{margin-top:3px}.toggle b{display:block;color:var(--text);font-size:14px}.route-actions{display:flex;align-items:center;gap:12px;margin-top:15px;flex-wrap:wrap}.route-actions input{min-width:260px;flex:1;padding:10px;border:1px solid var(--line);border-radius:7px;background:var(--panel2);color:var(--text)}.route-actions button,.account-actions button{cursor:pointer}.account-actions{display:flex;align-items:center;gap:10px;margin-top:14px}.account-result{font-size:12px}.danger{margin-top:12px;padding:10px 12px;border-left:3px solid var(--red);background:#2b1a1a;color:#ffaaa5}.refresh-notice{display:flex;align-items:center;gap:12px;margin-top:14px;padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}.refresh-notice b{white-space:nowrap}.refresh-notice span{color:var(--muted);font-size:12px}.refresh-notice.good{border-left:3px solid var(--green)}.refresh-notice.warn{border-left:3px solid var(--amber)}.refresh-notice.bad{border-left:3px solid var(--red)}.diagnostics{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:20px}.diagnostic-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}.diagnostic-head h2{font-size:20px;margin:5px 0 6px}.diagnostic-head p{color:var(--muted);margin:0;line-height:1.55}.diagnostic-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;margin-top:18px;background:var(--line);border:1px solid var(--line);border-radius:8px;overflow:hidden}.diagnostic-grid article{background:var(--panel2);padding:14px;min-width:0}.diagnostic-grid span,.next-step span{display:block;color:var(--muted);font-size:12px}.diagnostic-grid b{display:block;margin:6px 0;font-size:15px;overflow-wrap:anywhere}.diagnostic-grid small{display:block;color:var(--muted);line-height:1.45}.good-text{color:var(--green)!important}.warn-text{color:var(--amber)!important}.next-step{display:grid;grid-template-columns:80px 1fr;align-items:center;gap:12px;margin-top:14px;padding:13px 14px;border:1px solid var(--line);border-radius:8px}.next-step b{font-size:14px}details{margin-top:10px;color:var(--muted)}summary{cursor:pointer;padding:8px 2px;font-size:12px}.detail-body{padding:0 12px 4px;line-height:1.55;font-size:12px}.detail-body p{margin:5px 0}@media(max-width:900px){.diagnostic-grid{grid-template-columns:repeat(2,1fr)}}@media(max-width:560px){.diagnostic-grid{grid-template-columns:1fr}.diagnostic-head{display:block}.diagnostic-head .state{margin-top:12px}.next-step{grid-template-columns:1fr}}.success-text{color:var(--green)}.error-text{color:var(--red)}@media(prefers-color-scheme:light){:root{color-scheme:light;--bg:#f5f7fa;--panel:#fff;--panel2:#f3f6f9;--line:#dce3ea;--text:#1f2933;--muted:#657382;--green:#16835d;--amber:#9a6810;--red:#c43d37;--blue:#256dcc}body{background:var(--bg)}.action,.filter,.chip,.toggle,select{background:var(--panel2);border-color:var(--line);color:var(--text)}.metric,.account-card,.model-table,.route-panel{background:var(--panel)}.good{background:#dff5eb;color:#116a4b}.bad{background:#fde8e7;color:#a92f2b}.muted{background:#e9eef2;color:#52616e}.neutral{background:#e3f0fc;color:#21649f}.warn{background:#fff1cf;color:#80580e}.notice{background:#fff9e9}.danger{background:#fff0ef;color:#a92f2b}.progress{background:#e6ebef}.model-table th,.model-table td{border-color:var(--line)}}@media(max-width:720px){.route-grid{grid-template-columns:1fr}}</style></head><body><main><header class="top"><div><div class="eyebrow">Provider health</div><h1>ZCode 账号管理</h1><p>账号池、路由状态与近期请求证据。凭证内容不会显示在此页面。</p><p class="section-note">国内 BigModel：在 CPA 凭证管理中导入 <code>bigmodel-coding:你的API_KEY</code>；国际 Z.ai：继续使用 OAuth。两平台凭据严格隔离。</p></div><div class="actions"><a class="action primary" href="?login=zai">登录 Z.AI 国际账户</a><a class="action primary" href="?login=bigmodel">登录 BigModel 国内账户</a><a class="action" href="?refresh=1">刷新状态</a><a class="action" href="?refresh=claim">刷新体验套餐</a><a class="action" href="?refresh=quota">刷新全部额度</a></div></header>%s%s<section class="metrics"><div class="metric"><b>%d</b><span>已注册账号</span></div><div class="metric"><b>%d</b><span>可路由</span></div><div class="metric"><b>%d</b><span>不可用 / 已禁用</span></div><div class="metric"><b>%d</b><span>近期成功</span></div><div class="metric"><b>%d</b><span>近期失败</span></div><div class="metric"><b>%d</b><span>无请求证据</span></div></section><section class="section"><div class="section-head"><h2>账号池</h2><p class="section-note">状态和计数由 CPA 宿主提供；更新时间不等同于最近调用时间。</p></div><div class="filters"><button class="filter active" data-filter="all">全部 <span>%d</span></button><button class="filter" data-filter="active">可路由 <span>%d</span></button><button class="filter" data-filter="unavailable">不可用 <span>%d</span></button><button class="filter" data-filter="disabled">已禁用 <span>%d</span></button></div><div class="account-grid">%s</div></section><section class="section"><div class="section-head"><h2>模型矩阵</h2><p class="section-note">账号池证据不等同于模型级独立检测。</p></div><div class="model-table"><table><thead><tr><th>模型</th><th>CPA 路由</th><th>验证状态</th></tr></thead><tbody>%s</tbody></table></div></section>%s</main><script>document.querySelectorAll('.filter').forEach(function(button){button.addEventListener('click',function(){document.querySelectorAll('.filter').forEach(function(item){item.classList.remove('active')});button.classList.add('active');var filter=button.dataset.filter;document.querySelectorAll('.account-card').forEach(function(card){card.classList.toggle('hidden',filter!=='all'&&card.dataset.state!==filter)})})});const paid=document.getElementById('allow-paid'),warning=document.getElementById('paid-warning');function syncWarning(){warning.hidden=!paid.checked}paid.addEventListener('change',syncWarning);syncWarning();document.querySelectorAll('.account-toggle').forEach(function(button){button.addEventListener('click',async function(){const disabling=button.dataset.disable==='true',result=button.nextElementSibling,active=document.querySelectorAll('.account-card[data-state="active"]').length,key=(window.prompt('请输入 Manager 管理员密钥（仅用于本次账号切换，不会保存）')||'').trim();if(disabling&&active<=1){result.className='account-result error-text';result.textContent='至少保留一个可路由账号';return}if(!key){result.className='account-result error-text';result.textContent='已取消切换';return}button.disabled=true;result.className='account-result';result.textContent='正在切换…';try{const response=await fetch('/v0/management/auth-files/status',{method:'PATCH',headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},credentials:'same-origin',cache:'no-store',body:JSON.stringify({name:button.dataset.name,auth_index:button.dataset.authIndex,disabled:disabling})});if(!response.ok)throw new Error('HTTP '+response.status);result.className='account-result success-text';result.textContent=disabling?'账号已停用':'账号已启用';setTimeout(function(){location.reload()},500)}catch(error){button.disabled=false;result.className='account-result error-text';result.textContent=error.message.includes('401')?'管理员密钥无效':'切换失败：'+error.message}})});document.getElementById('route-form').addEventListener('submit',async function(event){event.preventDefault();const result=document.getElementById('route-result');const form=new URLSearchParams({action:'save_config',route_mode:document.getElementById('route-mode').value,dynamic_routing_active:document.getElementById('dynamic-routing').checked,client_signing_enabled:document.getElementById('client-signing').checked,client_signing_allow_unsigned_chat_replay:document.getElementById('unsigned-chat-replay').checked,retain_dual_credentials:document.getElementById('retain-dual').checked,allow_paid_fallback:paid.checked,off_peak_enabled:document.getElementById('off-peak').checked,start_plan_auto_claim:document.getElementById('start-plan-auto-claim').checked});result.className='';result.textContent='正在保存…';try{const response=await fetch(location.pathname,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},credentials:'same-origin',cache:'no-store',body:form.toString()});const body=await response.json();if(!response.ok||!body.ok)throw new Error(body.message||'HTTP '+response.status);result.className='success-text';result.textContent=body.message||'配置已保存并生效';var state=document.getElementById('route-state');if(state&&body.generation)state.textContent='effective generation '+body.generation}catch(error){result.className='error-text';result.textContent='保存失败：'+error.message}})</script></body></html>`, renderRoutePanel(), renderRefreshNotice(page), len(page.Accounts), page.Active, page.Unavailable+page.Disabled, page.Success, page.Failed, page.NoEvidence, len(page.Accounts), page.Active, page.Unavailable, page.Disabled, cards.String(), modelRows.String(), renderDiagnostics(page)))
 }
 
 func claimRefreshRequested(req pluginapi.ManagementRequest) bool {
@@ -664,61 +671,103 @@ func claimManagementResponse(status int, message string) pluginapi.ManagementRes
 func handleManualClaim(values url.Values, hostCallbackID string) pluginapi.ManagementResponse {
 	authIndex := strings.TrimSpace(values.Get("auth_index"))
 	planID := strings.TrimSpace(values.Get("plan_id"))
-	finish := func(status int, message, result string) pluginapi.ManagementResponse {
-		appendClaimAudit(authIndex, planID, result, time.Now())
+	verifyParam := strings.TrimSpace(values.Get("verify_param"))
+	region := strings.TrimSpace(values.Get("region"))
+	finish := func(status int, message string) pluginapi.ManagementResponse {
 		return claimManagementResponse(status, message)
 	}
-	if len(values) != 5 || len(values["action"]) != 1 || len(values["auth_index"]) != 1 || len(values["plan_id"]) != 1 || len(values["confirmation_token"]) != 1 || len(values["confirm"]) != 1 || values.Get("action") != "claim" || authIndex == "" || planID == "" || strings.TrimSpace(values.Get("confirmation_token")) == "" || values.Get("confirm") != "true" {
-		return finish(http.StatusBadRequest, "领取请求必须来自独立确认页并显式确认", "invalid_confirmation")
+	if len(values["action"]) != 1 || len(values["auth_index"]) != 1 || len(values["plan_id"]) != 1 || len(values["confirmation_token"]) != 1 || len(values["confirm"]) != 1 || len(values["verify_param"]) != 1 || len(values["region"]) > 1 || values.Get("action") != "claim" || authIndex == "" || planID == "" || strings.TrimSpace(values.Get("confirmation_token")) == "" || values.Get("confirm") != "true" {
+		return finish(http.StatusBadRequest, "领取请求必须来自独立确认页并显式确认")
+	}
+	if verifyParam == "" || len(verifyParam) > 4096 || len(region) > 64 {
+		return finish(http.StatusBadRequest, "必须提交正常浏览器产生的官方一次性 verifyParam，可选填写 region")
 	}
 	key := normalizeClaimKey(authIndex, planID)
 	if !consumeClaimConfirmation(values.Get("confirmation_token"), key, time.Now()) {
-		return finish(http.StatusConflict, "确认令牌无效、已过期或已使用，请重新确认", "token_rejected")
+		return finish(http.StatusConflict, "确认令牌无效、已过期或已使用，请重新确认")
 	}
 	if !tryAcquireClaim(key) {
-		return finish(http.StatusConflict, "相同账号和套餐已有领取请求正在执行", "in_flight")
+		return finish(http.StatusConflict, "相同账号和套餐已有领取请求正在执行")
 	}
 	defer releaseClaim(key)
 	if !claimPlanInRecentPreview(authIndex, planID) {
-		return finish(http.StatusConflict, "套餐预览已过期或 plan_id 不在最近成功预览中，请先刷新体验套餐", "preview_rejected")
+		return finish(http.StatusConflict, "套餐预览已过期或 plan_id 不在最近成功预览中，请先刷新体验套餐")
 	}
 	storage, err := loadClaimStorage(authIndex)
 	if err != nil {
-		return finish(http.StatusBadRequest, "无法读取账号凭证", "credentials_unavailable")
+		return finish(http.StatusBadRequest, "无法读取账号凭证")
 	}
-	if err := validateManualClaimStorage(storage); err != nil {
-		return finish(http.StatusBadRequest, "手动领取需要有效的 JWT、设备 MID 和验证码参数", "materials_invalid")
+	if err := validateClaimStorage(storage); err != nil {
+		return finish(http.StatusBadRequest, "手动领取需要同一账号中的有效 JWT 和固定 UUID v4 DeviceMID")
 	}
+	storage.CaptchaVerifyParam = verifyParam
+	storage.CaptchaVerifyRegion = region
 	request, err := buildClaimRequest(storage, planID)
 	if err != nil {
-		return finish(http.StatusBadRequest, "领取请求材料无效", "request_invalid")
+		return finish(http.StatusBadRequest, "领取请求材料无效")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), claimRequestTimeout)
 	defer cancel()
 	response, err := claimHTTPDo(ctx, nil, hostCallbackID, request)
 	if err != nil {
-		return finish(http.StatusBadGateway, "套餐领取网络失败", "network_error")
+		return finish(http.StatusBadGateway, "套餐领取网络失败")
 	}
 	if len(response.Body) > claimMaxResponseBody {
-		return finish(http.StatusBadGateway, "套餐领取响应过大", "response_too_large")
+		return finish(http.StatusBadGateway, "套餐领取响应过大")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return finish(http.StatusBadGateway, fmt.Sprintf("套餐领取接口返回 HTTP %d", response.StatusCode), "http_error")
+		return finish(http.StatusBadGateway, fmt.Sprintf("套餐领取接口返回 HTTP %d", response.StatusCode))
 	}
 	result, err := parseClaimResult(response.Body)
 	if err != nil {
-		return finish(http.StatusBadGateway, "套餐领取响应无法解析", "parse_error")
+		return finish(http.StatusBadGateway, "套餐领取响应无法解析")
 	}
 	if result.Category != "success" {
 		if result.Category == "unknown" {
-			return finish(http.StatusConflict, fmt.Sprintf("套餐领取失败（业务码 %d）", result.Code), "business_unknown")
+			return finish(http.StatusConflict, fmt.Sprintf("套餐领取失败（业务码 %d）", result.Code))
 		}
-		return finish(http.StatusConflict, result.Message, "business_"+result.Category)
+		return finish(http.StatusConflict, result.Message)
+	}
+	confirmationRequest := pluginapi.HTTPRequest{
+		Method:  http.MethodGet,
+		URL:     zcodeBillingCurrentURL,
+		Headers: claimHeaders(storage),
+	}
+	confirmationResponse, confirmationErr := claimHTTPDo(ctx, nil, hostCallbackID, confirmationRequest)
+	if confirmationErr != nil || confirmationResponse.StatusCode < 200 || confirmationResponse.StatusCode >= 300 || len(confirmationResponse.Body) > claimMaxResponseBody || !claimBillingCurrentConfirmsPlan(confirmationResponse.Body, planID) {
+		return finish(http.StatusConflict, "领取接口成功但到账未确认")
 	}
 	claimPreviews.Lock()
 	delete(claimPreviews.items, authIndex)
 	claimPreviews.Unlock()
-	return finish(http.StatusOK, "领取成功", "success")
+	return finish(http.StatusOK, "已到账")
+}
+
+func claimBillingCurrentConfirmsPlan(body []byte, planID string) bool {
+	var envelope struct {
+		Data struct {
+			Plans []struct {
+				PlanID       string             `json:"plan_id"`
+				Status       string             `json:"status"`
+				Entitlements []claimEntitlement `json:"entitlements"`
+			} `json:"plans"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(body, &envelope) != nil {
+		return false
+	}
+	for _, plan := range envelope.Data.Plans {
+		if strings.TrimSpace(plan.PlanID) == strings.TrimSpace(planID) && strings.EqualFold(strings.TrimSpace(plan.Status), "active") {
+			return true
+		}
+		for _, entitlement := range plan.Entitlements {
+			label := strings.ToLower(strings.Join([]string{entitlement.EntitlementID, entitlement.ShowName, entitlement.Meter, entitlement.UnitType}, " "))
+			if strings.EqualFold(strings.TrimSpace(plan.Status), "active") && entitlement.GrantUnits == 300 && strings.Contains(label, "m") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func formatClaimTime(unix int64) string {
@@ -731,6 +780,11 @@ func formatClaimTime(unix int64) string {
 func renderClaimManagement(page zcodeStatusPage) []byte {
 	var rows strings.Builder
 	for _, item := range sortedClaimSnapshots(page) {
+		if item.Preview.Error != "" {
+			rows.WriteString(fmt.Sprintf(`<tr><td><strong>%s</strong></td><td colspan="2">%s</td><td><span class="state bad">预览失败</span></td><td>请刷新后重试</td></tr>`, html.EscapeString(item.Account.Name), html.EscapeString(item.Preview.Error)))
+			continue
+		}
+		claimable := item.Preview.Preview.Eligible && item.Preview.Preview.Claimable
 		for _, plan := range item.Preview.Preview.Plans {
 			var benefits []string
 			for _, entitlement := range plan.Entitlements {
@@ -743,17 +797,23 @@ func renderClaimManagement(page zcodeStatusPage) []byte {
 			if len(benefits) == 0 {
 				benefits = append(benefits, firstString(plan.Description, "未说明"))
 			}
-			rows.WriteString(fmt.Sprintf(`<tr><td><strong>%s</strong><small>%s</small></td><td>%s</td><td>%s<br><small>有效期：%s 至 %s</small></td><td><span class="state good">可领取</span></td><td><a class="action primary" href="?confirm_claim=1&amp;auth_index=%s&amp;plan_id=%s">手动领取…</a></td></tr>`, html.EscapeString(firstString(plan.Name, plan.PlanID)), html.EscapeString(item.Account.Name), html.EscapeString(strings.Join(benefits, "；")), html.EscapeString(firstString(plan.Description, "体验套餐")), html.EscapeString(formatClaimTime(plan.StartsAt)), html.EscapeString(formatClaimTime(plan.EndsAt)), url.QueryEscape(item.Account.AuthIndex), url.QueryEscape(plan.PlanID)))
+			state := `<span class="state warn">不可领取</span>`
+			action := `请刷新后重试`
+			if claimable {
+				state = `<span class="state good">可领取</span>`
+				action = fmt.Sprintf(`<a class="action primary" href="?confirm_claim=1&amp;auth_index=%s&amp;plan_id=%s">官方验证并领取…</a>`, url.QueryEscape(item.Account.AuthIndex), url.QueryEscape(plan.PlanID))
+			}
+			rows.WriteString(fmt.Sprintf(`<tr><td><strong>%s</strong><small>%s</small></td><td>%s</td><td>%s<br><small>有效期：%s 至 %s</small></td><td>%s</td><td>%s</td></tr>`, html.EscapeString(firstString(plan.Name, plan.PlanID)), html.EscapeString(item.Account.Name), html.EscapeString(strings.Join(benefits, "；")), html.EscapeString(firstString(plan.Description, "体验套餐")), html.EscapeString(formatClaimTime(plan.StartsAt)), html.EscapeString(formatClaimTime(plan.EndsAt)), state, action))
 		}
 	}
 	if rows.Len() == 0 {
-		rows.WriteString(`<tr><td colspan="5" class="empty">尚无最近成功的体验套餐预览。点击“刷新体验套餐”；该操作只读，不会自动领取。</td></tr>`)
+		rows.WriteString(`<tr><td colspan="5" class="empty">尚无最近成功的体验套餐预览。刷新体验套餐”；该操作只读，不会自动领取></tr>`)
 	}
-	return []byte(fmt.Sprintf(`<section class="section claim-panel"><div class="section-head"><div><h2>体验套餐</h2><p class="section-note">仅展示最近成功的只读预览。领取只会在你显式确认后执行一次，不会自动领取。</p></div></div><div class="model-table"><table><thead><tr><th>套餐名称 / 账号</th><th>权益</th><th>有效期</th><th>状态</th><th>操作</th></tr></thead><tbody>%s</tbody></table></div></section>`, rows.String()))
+	return []byte(fmt.Sprintf(`<section class="section claim-panel"><div class="section-head"><div><h2>体验套餐</h2><p class="section-note">展示最近一次只读预览及明确状态。会在你显式确认后执行一次，不会自动领取></div></div><div class="model-table"><table><thead><tr><th>套餐名称 / 账号</th><th>权益</th><th>有效期</th><th>状态</th><th>操作</th></tr></thead><tbody>%s</tbody></table></div></section>`, rows.String()))
 }
 
 func renderClaimConfirmation(authIndex, planID, token string) []byte {
-	return []byte(fmt.Sprintf(`<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>确认手动领取</title></head><body><main><h1>确认手动领取</h1><p>这是独立的二次确认步骤。提交后令牌立即失效，失败也不能重放。</p><p>账号标识：<code>%s</code><br>套餐：<code>%s</code></p><form id="claim-form" method="post"><input type="hidden" name="action" value="claim"><input type="hidden" name="auth_index" value="%s"><input type="hidden" name="plan_id" value="%s"><input type="hidden" name="confirmation_token" value="%s"><label><input type="checkbox" name="confirm" value="true" required> 我确认现在执行一次手动领取</label><p><button id="claim-submit" type="submit">确认并领取</button> <a href="?">取消</a></p><p id="claim-result" role="status"></p></form></main><script>document.getElementById("claim-form").addEventListener("submit",async function(event){event.preventDefault();var form=event.currentTarget,button=document.getElementById("claim-submit"),result=document.getElementById("claim-result");button.disabled=true;result.textContent="正在领取，请稍候…";try{var response=await fetch(location.pathname,{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:new URLSearchParams(new FormData(form)),credentials:"same-origin",cache:"no-store"}),body=await response.json();result.textContent=body.message||("领取失败（HTTP "+response.status+")");if(response.ok&&body.ok){button.textContent="领取成功";form.querySelectorAll("input").forEach(function(input){input.disabled=true})}else{button.disabled=false}}catch(error){button.disabled=false;result.textContent="领取请求失败，请检查网络后重新刷新套餐"}});</script></body></html>`, html.EscapeString(authIndex), html.EscapeString(planID), html.EscapeString(authIndex), html.EscapeString(planID), html.EscapeString(token)))
+	return []byte(fmt.Sprintf(`<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>官方验证并领取</title></head><body><main><h1>官方验证并领取</h1><p>请先在正常浏览器完成官方验证，再粘贴本次官方交互产生的一次性 verifyParam。region 可选。材料仅供本次表单单次使用，不进入验证码池、不持久化，也不写入审计正文。</p><p>账号标识：<code>%s</code><br>套餐：<code>%s</code></p><form id="claim-form" method="post"><input type="hidden" name="action" value="claim"><input type="hidden" name="auth_index" value="%s"><input type="hidden" name="plan_id" value="%s"><input type="hidden" name="confirmation_token" value="%s"><p><label>官方一次性 verifyParam<br><input type="text" name="verify_param" required maxlength="4096" autocomplete="off"></label></p><p><label>region（可选）<br><input type="text" name="region" maxlength="64" autocomplete="off"></label></p><label><input type="checkbox" name="confirm" value="true" required> 我确认材料来自本次正常浏览器官方交互，并立即执行一次领取</label><p><button id="claim-submit" type="submit">官方验证并领取</button> <a href="?">取消</a></p><p id="claim-result" role="status"></p></form></main><script>document.getElementById("claim-form").addEventListener("submit",async function(event){event.preventDefault();var form=event.currentTarget,button=document.getElementById("claim-submit"),result=document.getElementById("claim-result");button.disabled=true;result.textContent="正在提交一次性官方验证材料并检查到账状态…";try{var response=await fetch(location.pathname,{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:new URLSearchParams(new FormData(form)),credentials:"same-origin",cache:"no-store"}),body=await response.json();result.textContent=body.message||("领取失败（HTTP "+response.status+")");if(response.ok&&body.ok){button.textContent="已到账";form.querySelectorAll("input").forEach(function(input){input.disabled=true})}else{button.disabled=false}}catch(error){button.disabled=false;result.textContent="领取请求失败，到账状态未确认"}});</script></body></html>`, html.EscapeString(authIndex), html.EscapeString(planID), html.EscapeString(authIndex), html.EscapeString(planID), html.EscapeString(token)))
 }
 
 func renderClaimAudit() []byte {
@@ -781,6 +841,45 @@ func quotaRefreshRequested(req pluginapi.ManagementRequest) bool {
 	return req.Query.Get("refresh") == "quota"
 }
 
+func handleManagementLogin(provider, hostCallbackID string) ([]byte, error) {
+	request, err := json.Marshal(rpcAuthLoginStartRequest{
+		AuthLoginStartRequest: pluginapi.AuthLoginStartRequest{Provider: provider},
+		HostCallbackID:        hostCallbackID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	started, err := handleAuthLoginStart(request)
+	if err != nil {
+		return managementResponse(http.StatusBadGateway, "text/plain; charset=utf-8", []byte("无法启动 OAuth 登录："+err.Error()))
+	}
+	var wrapped envelope
+	if err := json.Unmarshal(started, &wrapped); err != nil {
+		return nil, err
+	}
+	if !wrapped.OK {
+		message := "无法启动 OAuth 登录"
+		if wrapped.Error != nil && strings.TrimSpace(wrapped.Error.Message) != "" {
+			message += "：" + wrapped.Error.Message
+		}
+		return managementResponse(http.StatusBadGateway, "text/plain; charset=utf-8", []byte(message))
+	}
+	var login pluginapi.AuthLoginStartResponse
+	if err := json.Unmarshal(wrapped.Result, &login); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(login.URL) == "" {
+		return managementResponse(http.StatusBadGateway, "text/plain; charset=utf-8", []byte("OAuth 登录地址为空"))
+	}
+	return okEnvelope(pluginapi.ManagementResponse{
+		StatusCode: http.StatusFound,
+		Headers: http.Header{
+			"Cache-Control": []string{"no-store"},
+			"Location":      []string{login.URL},
+		},
+	})
+}
+
 func handleManagement(request []byte) ([]byte, error) {
 	var rpcReq rpcManagementRequest
 	if err := json.Unmarshal(request, &rpcReq); err != nil {
@@ -801,6 +900,8 @@ func handleManagement(request []byte) ([]byte, error) {
 		var response pluginapi.ManagementResponse
 		if values.Get("action") == "prepare_config" {
 			response = handlePrepareConfig(values)
+		} else if values.Get("action") == "save_config" {
+			response = handleSaveConfig(values)
 		} else if values.Get("action") == "add_captcha" {
 			response = handleAddCaptcha(values)
 		} else if values.Get("action") == "clear_captcha" {
@@ -815,6 +916,12 @@ func handleManagement(request []byte) ([]byte, error) {
 			StatusCode: http.StatusMethodNotAllowed,
 			Body:       []byte("method not allowed"),
 		})
+	}
+	if provider := strings.ToLower(strings.TrimSpace(req.Query.Get("login"))); provider != "" {
+		if provider != "zai" && provider != "bigmodel" {
+			return managementResponse(http.StatusBadRequest, "text/plain; charset=utf-8", []byte("不支持的 OAuth 平台"))
+		}
+		return handleManagementLogin(provider, rpcReq.HostCallbackID)
 	}
 	if req.Query.Get("config_control") == "effective" {
 		return okEnvelope(effectiveConfigManagementResponse())

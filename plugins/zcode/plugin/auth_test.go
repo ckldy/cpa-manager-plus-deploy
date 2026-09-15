@@ -25,7 +25,7 @@ func TestQuotaRefreshUsesSeparatedManagementQuery(t *testing.T) {
 }
 
 func TestHandleAuthParseAcceptsExplicitBigModelCodingKey(t *testing.T) {
-	key := "test-bigmodel-key"
+	key := "bm-id.secret-value-1234567890"
 	raw, _ := json.Marshal("bigmodel-coding:" + key)
 	resp := parseAuthResponseForTest(t, "zcode-bigmodel.json", raw)
 	if !resp.Handled {
@@ -209,7 +209,7 @@ func TestQuotaRefreshOnlyUsesCodingPlanJWTAndDoesNotLeakSecrets(t *testing.T) {
 	}
 }
 
-func TestAuthLoginStartUsesOfficialCustomSchemeCallback(t *testing.T) {
+func TestAuthLoginStartUsesServerMediatedCallback(t *testing.T) {
 	raw, _ := json.Marshal(rpcAuthLoginStartRequest{AuthLoginStartRequest: pluginapi.AuthLoginStartRequest{Provider: ProviderZCode}})
 	out, err := handleAuthLoginStart(raw)
 	if err != nil {
@@ -220,11 +220,14 @@ func TestAuthLoginStartUsesOfficialCustomSchemeCallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := u.Query().Get("redirect_uri"); got != "zcode://zai-auth/callback" || ZCodeRedirectURI != "zcode://zai-auth/callback" {
+	if got := u.Query().Get("redirect_uri"); got != "https://zcode.z.ai/api/v1/oauth/cli/callback/zai" {
 		t.Fatalf("redirect_uri=%q", got)
 	}
-	if got := u.Query().Get("state"); got == "" || got != resp.State {
-		t.Fatalf("authorize state=%q response state=%q", got, resp.State)
+	if got := u.Query().Get("state"); got == "" {
+		t.Fatal("server authorize URL is missing its OAuth state")
+	}
+	if u.Query().Get("state") == resp.State {
+		t.Fatal("server OAuth state must remain separate from the plugin polling state")
 	}
 	if !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(resp.State) {
 		t.Fatalf("state must be 256-bit lowercase hex, got %q", resp.State)
@@ -628,7 +631,7 @@ func TestHandleAuthParseAcceptsZCodeAPIKey(t *testing.T) {
 }
 
 func TestHandleAuthParseUnquotesJSONStringJWT(t *testing.T) {
-	jwt := "test.jwt.fixture"
+	jwt := "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyLTEyMzQ1Njc4OTAifQ.signature-value-1234567890"
 	raw, err := json.Marshal(jwt)
 	if err != nil {
 		t.Fatal(err)
@@ -661,11 +664,16 @@ func TestHandleAuthParseDoesNotClaimUnroutedTypelessSecret(t *testing.T) {
 	}
 }
 
-func TestRoutePanelSaveRequiresExplicitUnstoredManagementKey(t *testing.T) {
+func TestRoutePanelSaveNoAdminKeyNoConfirmTokenDirectSave(t *testing.T) {
 	body := string(renderZCodeAccountPage(zcodeStatusPage{}))
-	for _, want := range []string{"确认、持久化并等待生效", "management-key", "Authorization", "keyInput.value=''", "config_control=effective", "等待 PluginReconfigure"} {
+	for _, want := range []string{"save_config", "保存配置"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("route panel missing %q", want)
+		}
+	}
+	for _, mustNot := range []string{"management-key", "config-confirm", "confirmation_token", "确认、持久化并等待生效", "PluginReconfigure", "config_control=confirm"} {
+		if strings.Contains(body, mustNot) {
+			t.Fatalf("route panel must not contain %q", mustNot)
 		}
 	}
 	if strings.Contains(body, "localStorage.setItem") || strings.Contains(body, "sessionStorage.setItem") {

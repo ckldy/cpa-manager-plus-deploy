@@ -44,9 +44,14 @@ var (
 func seededProbeSnapshot() probeSnapshot {
 	now := time.Now()
 	entries := map[string]probeEntry{}
-	for _, id := range []string{"qwen3.8-flash", "glm-5.3-flash", "deepseek-v4-flash", "hy3"} {
+	// 2026-09-14 measured reality: these call fine on a zero-balance account.
+	for _, id := range []string{"qwen3.8-flash", "hy3", "mimo-v2.5"} {
 		entries[id] = probeEntry{Class: probeFree, CheckedAt: now}
 	}
+	// glm-5.3-flash became credit-gated (400 insufficient_user_quota, 102
+	// credits/call): label it premium immediately after restart so the status
+	// page does not claim it free. fallback.go still keeps it switchable.
+	entries["glm-5.3-flash"] = probeEntry{Class: probePremium, CheckedAt: now}
 	return probeSnapshot{Entries: entries}
 }
 
@@ -106,6 +111,9 @@ func classifyProbeResponse(resp pluginapi.HTTPResponse) probeClass {
 		return probeUnknown
 	}
 	if resp.StatusCode == http.StatusForbidden && (strings.Contains(text, "deposit required") || strings.Contains(text, "access_denied")) {
+		return probePremium
+	}
+	if (resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusPaymentRequired) && upstreamQuotaExceeded(text) {
 		return probePremium
 	}
 	return probeUnknown
@@ -183,19 +191,27 @@ func runProbe(apiKey string) {
 		finish("上游模型列表无法解析")
 		return
 	}
+	upstreamIDs := make([]string, 0, len(listed.Data))
 	available := make(map[string]bool, len(listed.Data))
 	for _, item := range listed.Data {
-		available[strings.TrimSpace(item.ID)] = true
-	}
-
-	ids := catalogModelIDs()
-	for i, id := range ids {
-		if !available[id] {
-			probeMu.Lock()
-			delete(probeState.Entries, id)
-			probeMu.Unlock()
+		id := strings.TrimSpace(item.ID)
+		if id == "" {
 			continue
 		}
+		available[id] = true
+		upstreamIDs = append(upstreamIDs, id)
+	}
+
+	probeMu.Lock()
+	for id := range probeState.Entries {
+		if !available[id] {
+			delete(probeState.Entries, id)
+		}
+	}
+	probeMu.Unlock()
+
+	ids := probeCandidateIDs(upstreamIDs)
+	for i, id := range ids {
 		ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
 		resp, callErr := executeHTTP(ctx, nil, "", pluginapi.HTTPRequest{
 			Method: http.MethodPost, URL: baiUpstreamURL, Headers: baiHeaders(apiKey), Body: makeProbePayload(id),
@@ -249,6 +265,24 @@ func firstActiveBAICredential() (authIndex, apiKey, errText string) {
 		}
 	}
 	return "", "", "没有可用的 B.AI 凭据"
+}
+
+func probeCandidateIDs(upstreamIDs []string) []string {
+	seen := make(map[string]struct{}, len(upstreamIDs))
+	ids := make([]string, 0, len(upstreamIDs))
+	for _, rawID := range upstreamIDs {
+		id := strings.TrimSpace(rawID)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 func catalogModelIDs() []string {

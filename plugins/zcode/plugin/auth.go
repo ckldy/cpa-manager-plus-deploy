@@ -22,6 +22,9 @@ const (
 	ZCodeAuthorizeURL    = "https://chat.z.ai/api/oauth/authorize"
 	BigModelAuthorizeURL = "https://bigmodel.cn/login"
 	ZCodeTokenURL        = "https://zcode.z.ai/api/v1/oauth/token"
+	ZCodeCLIInitURL      = "https://zcode.z.ai/api/v1/oauth/cli/init"
+	ZCodeCLIPollBaseURL  = "https://zcode.z.ai/api/v1/oauth/cli/poll/"
+	zcodeOAuthHost       = "zcode.z.ai"
 	ZCodeBusinessLogin   = "https://api.z.ai/api/auth/z/login"
 	ZCodeAppID           = "client_P8X5CMWmlaRO9gyO-KSqtg"
 	BigModelAppID        = "zcode"
@@ -34,11 +37,16 @@ const (
 )
 
 type oauthCallback struct {
-	Provider   string
-	Code       string
-	Error      string
-	ExpiresAt  time.Time
-	Processing bool
+	Provider        string
+	Code            string
+	Error           string
+	FlowID          string
+	PollBearer      string
+	PollIntervalSec int
+	BoundHost       string
+	ExpiresAt       time.Time
+	Processing      bool
+	ServerMediated  bool
 }
 
 var oauthCallbacks = struct {
@@ -233,6 +241,97 @@ func looksLikeAPIKey(v string) bool {
 	return len(v) >= 20 && !strings.ContainsAny(v, " \t\r\n{}[]\"")
 }
 
+type zaiCLIInitData struct {
+	FlowID          string `json:"flow_id"`
+	PollToken       string `json:"poll_token"`
+	AuthorizeURL    string `json:"authorize_url"`
+	ExpiresAt       int64  `json:"expires_at"`
+	PollIntervalSec int    `json:"poll_interval_sec"`
+}
+
+func startZaiCLILogin(hostCallbackID string) ([]byte, bool, error) {
+	bearer, err := randomState(32)
+	if err != nil {
+		return nil, false, fmt.Errorf("generate Z.AI OAuth bearer: %w", err)
+	}
+	body, _ := json.Marshal(map[string]string{"provider": "zai"})
+	headers := http.Header{"Authorization": []string{"Bearer " + bearer}}
+	data, err := requestRemoteData(hostCallbackID, http.MethodPost, ZCodeCLIInitURL, headers, body)
+	if err != nil {
+		if isZaiCLIExplicitlyUnsupported(err) {
+			return nil, true, err
+		}
+		return nil, false, errors.New("Z.AI OAuth 初始化失败，请稍后重试")
+	}
+
+	var init zaiCLIInitData
+	if err := json.Unmarshal(data, &init); err != nil {
+		return nil, false, errors.New("Z.AI OAuth 初始化响应协议错误")
+	}
+	init.FlowID = strings.TrimSpace(init.FlowID)
+	init.AuthorizeURL = strings.TrimSpace(init.AuthorizeURL)
+	if init.FlowID == "" || init.AuthorizeURL == "" || init.ExpiresAt <= 0 || init.PollIntervalSec <= 0 {
+		return nil, false, errors.New("Z.AI OAuth 初始化响应协议错误")
+	}
+	if strings.ContainsAny(init.FlowID, "/?#\\") {
+		return nil, false, errors.New("Z.AI OAuth 初始化响应安全校验失败")
+	}
+	authorizeURL, err := url.Parse(init.AuthorizeURL)
+	if err != nil || authorizeURL.Scheme != "https" || authorizeURL.Hostname() != "chat.z.ai" {
+		return nil, false, errors.New("Z.AI OAuth 授权地址安全校验失败")
+	}
+	expiresAt := time.Unix(init.ExpiresAt, 0).UTC()
+	if !expiresAt.After(time.Now()) {
+		return nil, false, errors.New("Z.AI OAuth 初始化响应已过期")
+	}
+
+	state, err := randomState(32)
+	if err != nil {
+		return nil, false, fmt.Errorf("generate Z.AI OAuth state: %w", err)
+	}
+	oauthCallbacks.Lock()
+	for key, callback := range oauthCallbacks.items {
+		if time.Now().After(callback.ExpiresAt) {
+			delete(oauthCallbacks.items, key)
+		}
+	}
+	oauthCallbacks.items[state] = oauthCallback{
+		Provider:        "zai",
+		FlowID:          init.FlowID,
+		PollBearer:      bearer,
+		PollIntervalSec: init.PollIntervalSec,
+		BoundHost:       zcodeOAuthHost,
+		ExpiresAt:       expiresAt,
+		ServerMediated:  true,
+	}
+	oauthCallbacks.Unlock()
+
+	out, err := okEnvelope(pluginapi.AuthLoginStartResponse{
+		Provider:  ProviderZCode,
+		URL:       init.AuthorizeURL,
+		State:     state,
+		ExpiresAt: expiresAt,
+		Metadata: map[string]any{
+			"provider":          "zai",
+			"flow":              "server-mediated",
+			"poll_interval_sec": init.PollIntervalSec,
+		},
+	})
+	return out, false, err
+}
+
+func isZaiCLIExplicitlyUnsupported(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "status=404") ||
+		strings.Contains(text, "status 404") ||
+		strings.Contains(text, "not found") ||
+		strings.Contains(text, "not supported") ||
+		strings.Contains(text, "unsupported")
+}
+
 func handleAuthLoginStart(request []byte) ([]byte, error) {
 	var rpcReq rpcAuthLoginStartRequest
 	if err := json.Unmarshal(request, &rpcReq); err != nil {
@@ -244,6 +343,15 @@ func handleAuthLoginStart(request []byte) ([]byte, error) {
 	}
 	if provider != "zai" && provider != "bigmodel" {
 		return nil, fmt.Errorf("unsupported OAuth provider %q", provider)
+	}
+	if provider == "zai" {
+		response, unsupported, err := startZaiCLILogin(rpcReq.HostCallbackID)
+		if err == nil {
+			return response, nil
+		}
+		if !unsupported {
+			return nil, err
+		}
 	}
 	state, err := randomState(32)
 	if err != nil {
@@ -312,6 +420,45 @@ func handleAuthLoginPoll(request []byte) ([]byte, error) {
 	if time.Now().After(callback.ExpiresAt) {
 		removeOAuthCallback(state)
 		return okEnvelope(pluginapi.AuthLoginPollResponse{Status: pluginapi.AuthLoginStatusError, Message: "Z.AI 授权已过期，请重新登录。"})
+	}
+	if callback.ServerMediated {
+		if callback.Provider != "zai" || callback.BoundHost != zcodeOAuthHost || callback.FlowID == "" || callback.PollBearer == "" {
+			removeOAuthCallback(state)
+			return okEnvelope(pluginapi.AuthLoginPollResponse{Status: pluginapi.AuthLoginStatusError, Message: "Z.AI OAuth 会话安全校验失败，请重新登录。"})
+		}
+		requestedProvider := strings.ToLower(strings.TrimSpace(rpcReq.Provider))
+		if requestedProvider == ProviderZCode {
+			requestedProvider = "zai"
+		}
+		if requestedProvider != "" && requestedProvider != "zai" {
+			removeOAuthCallback(state)
+			return okEnvelope(pluginapi.AuthLoginPollResponse{Status: pluginapi.AuthLoginStatusError, Message: "OAuth 登录平台与会话不一致，请重新登录。"})
+		}
+		oauthCallbacks.Lock()
+		stored, ok := oauthCallbacks.items[state]
+		if !ok || stored.Processing {
+			oauthCallbacks.Unlock()
+			return okEnvelope(pluginapi.AuthLoginPollResponse{Status: pluginapi.AuthLoginStatusPending})
+		}
+		stored.Processing = true
+		oauthCallbacks.items[state] = stored
+		oauthCallbacks.Unlock()
+
+		tokens, status, err := pollZaiCLILogin(rpcReq.HostCallbackID, callback)
+		if status == "pending" && err == nil {
+			oauthCallbacks.Lock()
+			if current, ok := oauthCallbacks.items[state]; ok {
+				current.Processing = false
+				oauthCallbacks.items[state] = current
+			}
+			oauthCallbacks.Unlock()
+			return okEnvelope(pluginapi.AuthLoginPollResponse{Status: pluginapi.AuthLoginStatusPending})
+		}
+		removeOAuthCallback(state)
+		if err != nil {
+			return okEnvelope(pluginapi.AuthLoginPollResponse{Status: pluginapi.AuthLoginStatusError, Message: err.Error()})
+		}
+		return finishOAuthLogin(rpcReq.HostCallbackID, "zai", tokens)
 	}
 	if callback.Error != "" {
 		removeOAuthCallback(state)
@@ -399,6 +546,120 @@ func handleAuthLoginPoll(request []byte) ([]byte, error) {
 	})
 }
 
+type zaiCLIPollData struct {
+	Status string `json:"status"`
+	Token  string `json:"token"`
+	User   struct {
+		UserID string `json:"user_id"`
+		Name   string `json:"name"`
+	} `json:"user"`
+	ZAI struct {
+		AccessToken string `json:"access_token"`
+	} `json:"zai"`
+}
+
+func pollZaiCLILogin(hostCallbackID string, callback oauthCallback) (oauthTokens, string, error) {
+	if callback.BoundHost != zcodeOAuthHost || callback.FlowID == "" || callback.PollBearer == "" {
+		return oauthTokens{}, "error", errors.New("Z.AI OAuth 会话安全校验失败，请重新登录。")
+	}
+	if time.Now().After(callback.ExpiresAt) {
+		return oauthTokens{}, "expired", errors.New("Z.AI 授权已过期，请重新登录。")
+	}
+	if strings.ContainsAny(callback.FlowID, "/?#\\") {
+		return oauthTokens{}, "error", errors.New("Z.AI OAuth 会话安全校验失败，请重新登录。")
+	}
+
+	pollURL := ZCodeCLIPollBaseURL + url.PathEscape(callback.FlowID)
+	parsed, err := url.Parse(pollURL)
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() != callback.BoundHost || parsed.Path != "/api/v1/oauth/cli/poll/"+url.PathEscape(callback.FlowID) {
+		return oauthTokens{}, "error", errors.New("Z.AI OAuth 轮询地址安全校验失败，请重新登录。")
+	}
+	headers := http.Header{"Authorization": []string{"Bearer " + callback.PollBearer}}
+	data, err := requestRemoteData(hostCallbackID, http.MethodGet, pollURL, headers, nil)
+	if err != nil {
+		return oauthTokens{}, "error", errors.New("Z.AI OAuth 轮询失败，请稍后重新登录。")
+	}
+
+	var poll zaiCLIPollData
+	if err := json.Unmarshal(data, &poll); err != nil {
+		return oauthTokens{}, "error", errors.New("Z.AI OAuth 轮询响应协议错误，请重新登录。")
+	}
+	switch strings.ToLower(strings.TrimSpace(poll.Status)) {
+	case "pending":
+		return oauthTokens{}, "pending", nil
+	case "failed", "denied", "rejected":
+		return oauthTokens{}, "rejected", errors.New("Z.AI 授权被拒绝，请重新登录。")
+	case "expired":
+		return oauthTokens{}, "expired", errors.New("Z.AI 授权已过期，请重新登录。")
+	case "ready":
+		accessToken := strings.TrimSpace(poll.ZAI.AccessToken)
+		jwtToken := strings.TrimSpace(poll.Token)
+		if accessToken == "" || jwtToken == "" {
+			return oauthTokens{}, "error", errors.New("Z.AI OAuth 轮询响应协议错误，请重新登录。")
+		}
+		return oauthTokens{
+			AccessToken: accessToken,
+			JWTToken:    jwtToken,
+			UserID:      strings.TrimSpace(poll.User.UserID),
+			UserLabel:   strings.TrimSpace(poll.User.Name),
+		}, "ready", nil
+	default:
+		return oauthTokens{}, "error", errors.New("Z.AI OAuth 轮询响应协议错误，请重新登录。")
+	}
+}
+
+func finishOAuthLogin(hostCallbackID, provider string, tokens oauthTokens) ([]byte, error) {
+	storage := authStorage{
+		UserID:    tokens.UserID,
+		UserLabel: tokens.UserLabel,
+		Provider:  provider,
+	}
+	if provider == "bigmodel" {
+		apiKey, err := resolveBigModelAPIKey(hostCallbackID, tokens.AccessToken)
+		if err != nil {
+			return okEnvelope(pluginapi.AuthLoginPollResponse{Status: pluginapi.AuthLoginStatusError, Message: "BigModel 未找到现有 API Key，请先在平台创建。"})
+		}
+		storage.APIKey = apiKey
+		storage.Source = "coding-plan-key"
+	} else {
+		storage.ZCodeJWTToken = tokens.JWTToken
+		storage.Source = "jwt"
+		if currentRouteConfig().RetainDual {
+			if apiKey, err := resolveZaiAPIKey(hostCallbackID, tokens.AccessToken); err == nil {
+				storage.APIKey = apiKey
+				storage.Source = "dual"
+			}
+		}
+	}
+	if err := ensureDeviceMID(&storage); err != nil {
+		return nil, fmt.Errorf("generate device MID: %w", err)
+	}
+	storageJSON, err := json.Marshal(storage)
+	if err != nil {
+		return nil, err
+	}
+	filePrefix := "zcode-"
+	if provider == "bigmodel" {
+		filePrefix = "zcode-bigmodel-"
+	}
+	return okEnvelope(pluginapi.AuthLoginPollResponse{
+		Status: pluginapi.AuthLoginStatusSuccess,
+		Auth: pluginapi.AuthData{
+			Provider:    ProviderZCode,
+			FileName:    filePrefix + safeFileLabel(tokens.UserID) + ".json",
+			Label:       buildLabel(&storage),
+			StorageJSON: storageJSON,
+			Metadata: map[string]any{
+				"type":              ProviderZCode,
+				"source":            storage.Source,
+				"credential_type":   storage.Source,
+				"api_key_exchange":  map[bool]string{true: "success", false: "fallback-jwt"}[storage.APIKey != ""],
+				"upstream_platform": provider,
+			},
+		},
+	})
+}
+
 func removeOAuthCallback(state string) {
 	oauthCallbacks.Lock()
 	delete(oauthCallbacks.items, state)
@@ -420,7 +681,7 @@ func saveOAuthCallback(state, code, errorMessage string) bool {
 		delete(oauthCallbacks.items, state)
 		return false
 	}
-	if callback.Code != "" || callback.Error != "" || callback.Processing {
+	if callback.ServerMediated || callback.Code != "" || callback.Error != "" || callback.Processing {
 		return false
 	}
 	callback.Code = code

@@ -63,7 +63,7 @@ func TestRewritePayloadModelLeavesNativeName(t *testing.T) {
 }
 
 func TestAuthParseBareKey(t *testing.T) {
-	raw, _ := json.Marshal(pluginapi.AuthParseRequest{Provider: ProviderBAI, FileName: "bai-test.json", RawJSON: []byte(`"test-bai-key"`)})
+	raw, _ := json.Marshal(pluginapi.AuthParseRequest{Provider: ProviderBAI, FileName: "bai-test.json", RawJSON: []byte(`"sk-bai-test-key-1234567890abcd"`)})
 	resp, err := decodeAuthParse(t, raw)
 	if err != nil {
 		t.Fatal(err)
@@ -75,13 +75,13 @@ func TestAuthParseBareKey(t *testing.T) {
 	if err := json.Unmarshal(resp.Auth.StorageJSON, &storage); err != nil {
 		t.Fatal(err)
 	}
-	if storage.APIKey != "test-bai-key" || storage.Provider != ProviderBAI {
+	if storage.APIKey != "sk-bai-test-key-1234567890abcd" || storage.Provider != ProviderBAI {
 		t.Fatalf("storage=%+v", storage)
 	}
 }
 
 func TestAuthParsePrefixedKey(t *testing.T) {
-	raw, _ := json.Marshal(pluginapi.AuthParseRequest{Provider: ProviderBAI, FileName: "bai-test.json", RawJSON: []byte(`"bai:test-bai-key"`)})
+	raw, _ := json.Marshal(pluginapi.AuthParseRequest{Provider: ProviderBAI, FileName: "bai-test.json", RawJSON: []byte(`"bai:sk-bai-test-key-1234567890abcd"`)})
 	resp, err := decodeAuthParse(t, raw)
 	if err != nil {
 		t.Fatal(err)
@@ -93,13 +93,13 @@ func TestAuthParsePrefixedKey(t *testing.T) {
 	if err := json.Unmarshal(resp.Auth.StorageJSON, &storage); err != nil {
 		t.Fatal(err)
 	}
-	if storage.APIKey != "test-bai-key" {
+	if storage.APIKey != "sk-bai-test-key-1234567890abcd" {
 		t.Fatalf("storage=%+v", storage)
 	}
 }
 
 func TestAuthParseJSONBody(t *testing.T) {
-	raw, _ := json.Marshal(pluginapi.AuthParseRequest{Provider: ProviderBAI, FileName: "bai-test.json", RawJSON: []byte(`{"api_key":"test-bai-key","provider":"bai"}`)})
+	raw, _ := json.Marshal(pluginapi.AuthParseRequest{Provider: ProviderBAI, FileName: "bai-test.json", RawJSON: []byte(`{"api_key":"sk-bai-test-key-1234567890abcd","provider":"bai"}`)})
 	resp, err := decodeAuthParse(t, raw)
 	if err != nil {
 		t.Fatal(err)
@@ -111,7 +111,7 @@ func TestAuthParseJSONBody(t *testing.T) {
 	if err := json.Unmarshal(resp.Auth.StorageJSON, &storage); err != nil {
 		t.Fatal(err)
 	}
-	if storage.APIKey != "test-bai-key" {
+	if storage.APIKey != "sk-bai-test-key-1234567890abcd" {
 		t.Fatalf("storage=%+v", storage)
 	}
 	if !strings.HasPrefix(resp.Auth.Label, "B.AI API Key · sk-b") || strings.Contains(resp.Auth.Label, "1234567890abcd") {
@@ -207,7 +207,7 @@ func TestExecuteNonStreamStripsPrefixAndSendsBearer(t *testing.T) {
 	defer server.Close()
 
 	client := &fakeHostClient{server: server}
-	storage, _ := json.Marshal(authStorage{APIKey: "test-bai-key", Provider: ProviderBAI})
+	storage, _ := json.Marshal(authStorage{APIKey: "sk-bai-test-key-1234567890abcd", Provider: ProviderBAI})
 	payload, _ := json.Marshal(map[string]any{"model": "bai-claude-opus-4.8", "messages": []any{}})
 	reqBytes, _ := json.Marshal(rpcExecutorRequest{
 		ExecutorRequest: pluginapi.ExecutorRequest{
@@ -245,7 +245,7 @@ func TestExecuteNonStreamStripsPrefixAndSendsBearer(t *testing.T) {
 	if !strings.Contains(string(resp.Payload), `"content":"ok"`) {
 		t.Fatalf("payload=%s", resp.Payload)
 	}
-	if gotAuth != "Bearer test-bai-key" {
+	if gotAuth != "Bearer sk-bai-test-key-1234567890abcd" {
 		t.Fatalf("auth=%q", gotAuth)
 	}
 	if gotModel != "claude-opus-4.8" {

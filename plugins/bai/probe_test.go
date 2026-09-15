@@ -18,6 +18,8 @@ func TestClassifyProbeResponse(t *testing.T) {
 		{"success", pluginapi.HTTPResponse{StatusCode: 200, Body: []byte(`{"choices":[{"message":{"content":"ok"}}]}`)}, probeFree},
 		{"deposit", pluginapi.HTTPResponse{StatusCode: 403, Body: []byte(`{"error":{"code":"access_denied","message":"Deposit required to unlock premium models"}}`)}, probePremium},
 		{"rate limit", pluginapi.HTTPResponse{StatusCode: 429}, probeUnknown},
+		{"credit quota 400", pluginapi.HTTPResponse{StatusCode: 400, Body: []byte(`{"error":{"message":"credit insufficient balance: balance=0 required=102","code":"insufficient_user_quota"}}`)}, probePremium},
+		{"generic 400", pluginapi.HTTPResponse{StatusCode: 400, Body: []byte(`{"error":{"message":"unknown model"}}`)}, probeUnknown},
 		{"server error", pluginapi.HTTPResponse{StatusCode: 503}, probeUnknown},
 		{"invalid success", pluginapi.HTTPResponse{StatusCode: 200, Body: []byte(`{"choices":[]}`)}, probeUnknown},
 	}
@@ -59,7 +61,7 @@ func TestFreeModelsHaveFreeSuffix(t *testing.T) {
 	resetProbeStateForTest()
 	models := baiModels()
 	for _, m := range models {
-		if m.ID == "bai-glm-5.3-flash" {
+		if m.ID == "bai-qwen3.8-flash" {
 			if !strings.HasSuffix(m.DisplayName, " (free)") {
 				t.Fatalf("display=%q", m.DisplayName)
 			}
@@ -67,6 +69,19 @@ func TestFreeModelsHaveFreeSuffix(t *testing.T) {
 		}
 	}
 	t.Fatal("seed free model missing")
+}
+
+func TestCreditGatedModelLosesFreeSuffix(t *testing.T) {
+	resetProbeStateForTest()
+	for _, m := range baiModels() {
+		if m.ID == "bai-glm-5.3-flash" {
+			if strings.HasSuffix(m.DisplayName, " (free)") {
+				t.Fatalf("credit-gated model still labelled free: display=%q", m.DisplayName)
+			}
+			return
+		}
+	}
+	t.Fatal("bai-glm-5.3-flash not found")
 }
 
 func TestPremiumAndUnknownModelsDoNotHaveFreeSuffix(t *testing.T) {
@@ -94,4 +109,35 @@ func TestClassifyProbeResponseAcceptsHTTPConstants(t *testing.T) {
 	if got := classifyProbeResponse(resp); got != probePremium {
 		t.Fatalf("got=%q", got)
 	}
+}
+
+func TestProbeCandidateIDsIncludeLatestUpstreamModels(t *testing.T) {
+	got := probeCandidateIDs([]string{"glm-5.3-flash", "new-free-model", " new-free-model ", ""})
+	want := map[string]bool{"glm-5.3-flash": true, "new-free-model": true}
+	for _, id := range got {
+		delete(want, id)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing upstream models: %v; got=%v", want, got)
+	}
+	for i := 1; i < len(got); i++ {
+		if got[i-1] >= got[i] {
+			t.Fatalf("candidates must be unique and sorted: %v", got)
+		}
+	}
+}
+
+func TestBAIModelsUsesSingleProbeSnapshot(t *testing.T) {
+	resetProbeStateForTest()
+	setProbeClassForTest("glm-5.3-flash", probeFree)
+	models := baiModels()
+	for _, model := range models {
+		if model.ID == "bai-glm-5.3-flash" {
+			if !strings.HasSuffix(model.DisplayName, " (free)") {
+				t.Fatalf("display=%q", model.DisplayName)
+			}
+			return
+		}
+	}
+	t.Fatal("bai-glm-5.3-flash not found")
 }

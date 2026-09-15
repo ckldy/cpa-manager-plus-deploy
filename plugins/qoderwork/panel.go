@@ -247,11 +247,11 @@ func summarizeCredits(accounts []wbAccount) map[string]any {
 // Web panel (self-contained HTML, no external assets)
 // -----------------------------------------------------------------------------
 
-func servePanel(sub string) []byte {
-	if sub != "" && sub != "/" && sub != "/panel" && sub != "/panel.html" {
+func servePanel(sub, csrf string) []byte {
+	if sub != "" && sub != "/" && sub != "/panel" && sub != "/panel.html" && !strings.HasSuffix(sub, "/panel") {
 		return []byte("<h1>404</h1>")
 	}
-	return panelHTML
+	return []byte(strings.ReplaceAll(string(panelHTML), "__QODERWORK_PANEL_CSRF__", csrf))
 }
 
 //go:embed panel.html

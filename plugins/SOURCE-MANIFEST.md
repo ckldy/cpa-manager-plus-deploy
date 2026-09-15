@@ -1,22 +1,29 @@
 # Plugin source provenance
 
-Synced: 2026-08-30
+Synced: 2026-09-15 (production-matched snapshot)
 
-| Plugin | Source origin | Source revision | Sanitized tree SHA-256 | Production binary SHA-256 |
-|---|---|---|---|---|
-| ZCode | production-matched local source snapshot | plugin 0.6.11 | `d237997d6c3fd65befaa5d4efe281c28b756ba968c47805570bd3fa144b40f38` | `94a709a8c78a7a5fd03dde8569d5c54b11a32ee4a6fc0489e9ed33a528a07410` |
-| B.AI | production-matched local source snapshot | plugin 0.1.0 | `40e32fa4dc2414eefc7089ceed79fcc450918c7cf75ba5ac6913e7f3c12eaba7` | `866babe628ca0ffd7260d8bcba61747ef0d48b2ce5625710f37e2a35157f756d` |
-| QoderWork | production-matched local source snapshot | production `dev` build | `33f7ed4797f14a26fb044b6295398640f40d783c12892a8e36193ad63fc4c92b` | `00498524edf07e7a0fa79a18d4de2f0159f913d04064d14a2a09260f86de5a9d` |
-| WorkBuddy | https://github.com/Sliverkiss/cpa-plugin/tree/main/workbuddy | `0c4cb3bff09b62af124d1452341861a63c4c5549` (0.8.5) | `f61c39b8650c8e92cebcea503b5c89c9752c99090d54ebf69d88364a27cb9945` | `2a232d33c6323fc65883f9cd738e80d2fb492f30be3c1eb9c68774042c183616` |
-| PrivacyFilter | https://github.com/rheodev/cpa-plugin-privacyfilter | tag `v0.2.0`, commit `a3db9d1f951d6d34cf7f00029cb71ff46a600d1f` | `34887ddd184b1567a318d20d37ebee09471c3ea77036cf816534dec2afaa77e2` | `94f4798ae1eb76a75681bb8dd04ed81971243fea8ba1b9f7d66139518d53e95b` |
+| Plugin | Source origin | Source revision | Production binary SHA-256 (prefix) |
+|---|---|---|---|
+| ZCode | production-matched source tree (official-verify-claim build, 2026-09-12) | `b91025f6` deploy tree + solver `captcha-happy.ts` 2026-09-05 | `b91025f60ae9a0b359fcf1aaa637a468c6097d0dacb3d071989c1fa574acb1b9` |
+| B.AI | production-matched source tree (zero-balance 402 + `/status`, 2026-09-15) | rebuild verified byte-identical with go1.27 linux/amd64 | `0081a3980a575c6f1ea2e361664f0839fc6d26ee22f304f18877933136dc58cf` |
+| QoderWork | production-matched source tree (`/status` + tools passthrough era, 2026-09-15) | fork of upstream `qoderwork` v0.4.1 (`f2f1b77d`) + own patches; rebuild verified byte-identical | `44bffae3b813cb109e8841f205a43d2a796d18f03fb4a8d8a9093d2d95ae6a26` |
+| TRAE Work | first-party plugin source (no public upstream), 2026-09-15 | includes 9074 check-in retry, panel overflow fixes, `/status`; rebuild verified byte-identical | `03ed39875205604803b9b903f271b494a139efce5691632a040677d0820ce152` |
+| WorkBuddy | https://github.com/Sliverkiss/cpa-plugin `main` + fork prefix patch | main `3a039f9` (v0.9.3) + 4 patched files (`models.go`, `models_test.go`, `configured_models_test.go`, `workbuddy_model_prefix_test.go`); version stamp `0.9.3-wbprefix-20260915` | `40bab45d22bc468f745fa60c225799f13fbdb8b6c89f56b349901f2aa12937ff` |
+| PrivacyFilter | https://github.com/rheodev/cpa-plugin-privacyfilter | tag `v0.2.0`, commit `a3db9d1f951d6d34cf7f00029cb71ff46a600d1f` | `94f4798ae1eb76a75681bb8dd04ed81971243fea8ba1b9f7d66139518d53e95b` |
+
+## Verification performed on the production build host (2026-09-15)
+
+- `gofmt -l`, `go vet`, `go test -count=1`: all plugin trees green.
+- `CGO_ENABLED=1 go build -buildmode=c-shared`: **bai, qoderwork, traework rebuilt byte-for-byte identical to the deployed `.so`**. WorkBuddy's deployed binary was built in the same tree. ZCode rebuild differs only in embedded build path (no `.go` file in the tree is newer than the deployed artifact), so it is production-matched rather than bit-for-bit reproducible.
+
+## Publication sanitization (source intentionally differs from production literals)
+
+- `zcode/plugin/util.go` / `zcode/plugin/auth_test.go` / `traework/login_test.go`: private deployment origin replaced with the placeholder `https://cpa.example.com`. Before building for your own deployment, set `oauthFirstPartyOrigin` to your public panel origin (ZCode OAuth callback Origin allow-list).
+- Test fixtures elsewhere use invalid/example values.
 
 ## Interpretation
 
-- “Production-matched” means the source snapshot selected for the deployed plugin. It does **not** claim bit-for-bit reproducibility unless the toolchain, SDK revision and linker metadata are also pinned.
+- "Production-matched" means the source snapshot selected for the deployed plugin. It does **not** claim bit-for-bit reproducibility unless the toolchain, SDK revision and build directory are also pinned (see verification notes above for which plugins are byte-identical).
 - Runtime auth files, logs, `.so` files, generated bundles and dependencies are intentionally excluded.
 - Upstream licenses remain in the corresponding vendored plugin directories.
-- Test credentials were replaced with unmistakably invalid fixtures before publication; this can change the sanitized tree digest without changing production behavior.
-
-## Notes
-
-- 2026-09-15: snapshot additionally includes the off-peak ticket-id status-match fix (live-tested, deployed to production 2026-08-30) and replaces the private OAuth first-party origin literal with the placeholder `https://cpa.example.com`. Before building for your own deployment, set `oauthFirstPartyOrigin` in `plugins/zcode/plugin/util.go` to your public panel origin; the digest column above refers to the 2026-08-30 snapshot.
+- The 2026-08-30 snapshot's tree digests were superseded by this sync; digests above refer to the deployed production binaries at sync time.

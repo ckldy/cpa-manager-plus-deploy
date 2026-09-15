@@ -184,7 +184,19 @@ func renderBAIStatusPage(page baiStatusPage) []byte {
 		}
 	}
 	groups := map[probeClass][]string{probeFree: {}, probePremium: {}, probeUnknown: {}}
-	for _, id := range catalogModelIDs() {
+	modelIDs := catalogModelIDs()
+	seenModelIDs := make(map[string]bool, len(modelIDs)+len(probe.Entries))
+	for _, id := range modelIDs {
+		seenModelIDs[id] = true
+	}
+	for id := range probe.Entries {
+		if !seenModelIDs[id] {
+			modelIDs = append(modelIDs, id)
+			seenModelIDs[id] = true
+		}
+	}
+	sort.Strings(modelIDs)
+	for _, id := range modelIDs {
 		class := probeUnknown
 		if entry, ok := probe.Entries[id]; ok {
 			class = entry.Class
@@ -239,7 +251,7 @@ func renderBAIStatusPage(page baiStatusPage) []byte {
 	}
 	baiStatusMu.Unlock()
 	body := fmt.Sprintf(`<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>B.AI 账号状态</title><style>
-:root{color-scheme:light dark;--bg:#f5f7fa;--panel:#fff;--line:#d7dee7;--text:#17202a;--muted:#667381;--green:#16865d;--blue:#0969da;--button:#fff;--button-line:#c7d0da;--good-bg:#dff7eb;--good-text:#116b4c;--muted-bg:#e9edf2;--muted-text:#52606d}@media (prefers-color-scheme:dark){:root{--bg:#101418;--panel:#171d23;--line:#2b353f;--text:#edf2f6;--muted:#9ba9b5;--green:#37c58a;--blue:#72b8ff;--button:#222b34;--button-line:#3a4651;--good-bg:#173b30;--good-text:#75e1b0;--muted-bg:#2b333b;--muted-text:#bac5cf}}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:900px;margin:0 auto;padding:28px 22px 48px}h1{font-size:24px}p{color:var(--muted);line-height:1.6}.refresh{display:inline-block;background:var(--button);border:1px solid var(--button-line);color:var(--text);border-radius:6px;padding:9px 12px;text-decoration:none;margin-right:8px}.account-card{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:17px;margin-top:14px}.state{display:inline-block;border-radius:999px;padding:4px 9px;font-size:12px;font-weight:700}.good{background:var(--good-bg);color:var(--good-text)}.muted{background:var(--muted-bg);color:var(--muted-text)}.card-detail{color:var(--muted);font-size:12px}.empty{border:1px dashed var(--line);border-radius:9px;color:var(--muted);padding:30px;text-align:center}code{color:var(--blue)}.models{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:16px;margin-top:22px;line-height:1.8;overflow-wrap:anywhere}.free{color:var(--green)}</style></head><body><main><header><h1>B.AI 账号状态</h1><p>已注册的 B.AI API Key、上游可用性与实时模型列表。凭证内容不会显示在此页面。</p><a class="refresh" href="?refresh=1">刷新状态</a><a class="refresh" href="?probe=1">强制探测免押模型</a></header><div>%s</div><section class="models"><strong>免押探测</strong><p>%s</p><p class="free"><strong>free：</strong>%s</p><p><strong>premium：</strong>%s</p><p><strong>unknown：</strong>%s</p><p><small>模型名称中的 (free) 表示当前账号最近一次可靠探测无需充值，不代表永久免费。</small></p></section><section class="models"><strong>上游模型列表</strong><p>%s</p></section></main></body></html>`,
+:root{color-scheme:light dark;--bg:#f5f7fa;--panel:#fff;--line:#d7dee7;--text:#17202a;--muted:#667381;--green:#16865d;--blue:#0969da;--button:#fff;--button-line:#c7d0da;--good-bg:#dff7eb;--good-text:#116b4c;--muted-bg:#e9edf2;--muted-text:#52606d}@media (prefers-color-scheme:dark){:root{--bg:#101418;--panel:#171d23;--line:#2b353f;--text:#edf2f6;--muted:#9ba9b5;--green:#37c58a;--blue:#72b8ff;--button:#222b34;--button-line:#3a4651;--good-bg:#173b30;--good-text:#75e1b0;--muted-bg:#2b333b;--muted-text:#bac5cf}}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:900px;margin:0 auto;padding:28px 22px 48px}h1{font-size:24px}p{color:var(--muted);line-height:1.6}.refresh{display:inline-block;background:var(--button);border:1px solid var(--button-line);color:var(--text);border-radius:6px;padding:9px 12px;text-decoration:none;margin-right:8px}.account-card{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:17px;margin-top:14px}.state{display:inline-block;border-radius:999px;padding:4px 9px;font-size:12px;font-weight:700}.good{background:var(--good-bg);color:var(--good-text)}.muted{background:var(--muted-bg);color:var(--muted-text)}.card-detail{color:var(--muted);font-size:12px}.empty{border:1px dashed var(--line);border-radius:9px;color:var(--muted);padding:30px;text-align:center}code{color:var(--blue)}.models{min-width:0;background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:16px;margin-top:22px;line-height:1.8;overflow:hidden}.models p{max-width:100%%;overflow-wrap:anywhere;word-break:break-word}.model-list{max-height:320px;overflow:auto;padding:10px 12px;border:1px solid var(--line);border-radius:7px;background:var(--bg);white-space:normal;overflow-wrap:anywhere;word-break:break-word}@media(max-width:600px){main{padding:20px 14px 36px}.refresh{margin:0 6px 8px 0}.models{padding:14px}.model-list{max-height:240px}}.free{color:var(--green)}</style></head><body><main><header><h1>B.AI 账号状态</h1><p>已注册的 B.AI API Key、上游可用性与实时模型列表。凭证内容不会显示在此页面。</p><a class="refresh" href="?refresh=1">刷新状态</a><a class="refresh" href="?probe=1">强制探测免押模型</a></header><div>%s</div><section class="models"><strong>免押探测</strong><p>%s</p><p class="free"><strong>free：</strong>%s</p><p><strong>premium：</strong>%s</p><p><strong>unknown：</strong>%s</p><p><small>模型名称中的 (free) 表示当前账号最近一次可靠探测无需充值，不代表永久免费。</small></p></section><section class="models"><strong>上游模型列表</strong><p class="model-list">%s</p></section></main></body></html>`,
 		accounts.String(), html.EscapeString(probeStateText), formatGroup(probeFree), formatGroup(probePremium), formatGroup(probeUnknown), modelList)
 	return []byte(body)
 }

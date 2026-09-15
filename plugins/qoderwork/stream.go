@@ -457,14 +457,17 @@ func aggregateQoderSSE(r io.Reader, model string) ([]byte, error) {
 	var folded struct {
 		Choices []struct {
 			Message struct {
-				Content   string `json:"content"`
-				Reasoning string `json:"reasoning_content"`
+				Content   string          `json:"content"`
+				Reasoning string          `json:"reasoning_content"`
+				ToolCalls json.RawMessage `json:"tool_calls"`
 			} `json:"message"`
 		} `json:"choices"`
 	}
 	_ = json.Unmarshal(completion, &folded)
-	if len(folded.Choices) > 0 && folded.Choices[0].Message.Content == "" && folded.Choices[0].Message.Reasoning == "" {
+	hasToolCalls := len(folded.Choices) > 0 && len(folded.Choices[0].Message.ToolCalls) > 0 && string(folded.Choices[0].Message.ToolCalls) != "null"
+	if len(folded.Choices) > 0 && folded.Choices[0].Message.Content == "" && folded.Choices[0].Message.Reasoning == "" && !hasToolCalls {
 		keys := map[string]bool{}
+		errCode, errMsg := "", ""
 		scanner := bufio.NewScanner(strings.NewReader(inner.String()))
 		for scanner.Scan() {
 			data := stripDataPrefix(scanner.Text())
@@ -478,6 +481,19 @@ func aggregateQoderSSE(r io.Reader, model string) ([]byte, error) {
 			for k := range chunk {
 				keys["top."+k] = true
 			}
+			// Capture gateway/provider error frames so the real failure is
+			// surfaced to the client instead of a generic empty completion.
+			// Qoder wraps errors as e.g.
+			// {"code":"provider_error","message":"...","details":"...","type":...}
+			if c, _ := chunk["code"].(string); c != "" && errCode == "" {
+				errCode = c
+			}
+			if m, _ := chunk["message"].(string); m != "" && errMsg == "" {
+				errMsg = m
+			}
+			if d, _ := chunk["details"].(string); d != "" && errCode == "" {
+				errMsg = d // details-only frames: surface the nested reason
+			}
 			choices, _ := chunk["choices"].([]any)
 			for _, c := range choices {
 				choice, _ := c.(map[string]any)
@@ -490,6 +506,9 @@ func aggregateQoderSSE(r io.Reader, model string) ([]byte, error) {
 					}
 				}
 			}
+		}
+		if errCode != "" || errMsg != "" {
+			return nil, fmt.Errorf("qoder upstream error: code=%s message=%s", truncateRedacted(errCode, 120), truncateRedacted(errMsg, 500))
 		}
 		ordered := make([]string, 0, len(keys))
 		for k := range keys {

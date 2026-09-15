@@ -1216,8 +1216,8 @@ function applyPolyfills(w) {
       }
     };
 
-  w.requestAnimationFrame = w.requestAnimationFrame || ((cb) => setTimeout(() => cb(Date.now()), 16));
-  w.cancelAnimationFrame = w.cancelAnimationFrame || ((id) => clearTimeout(id));
+  w.requestAnimationFrame = w.requestAnimationFrame || ((cb) => w.setTimeout(() => cb(Date.now()), 16));
+  w.cancelAnimationFrame = w.cancelAnimationFrame || ((id) => w.clearTimeout(id));
 
   try {
     Object.defineProperty(w.document, "hidden", { value: false, configurable: true });

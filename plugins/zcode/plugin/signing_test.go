@@ -149,8 +149,8 @@ func TestStrictTransportRejectsRedirectAndBodyLimit(t *testing.T) {
 	}
 }
 
-func TestVerifyRetryDoesNotThirdReplayChatPOST(t *testing.T) {
-	m := newSigningManager(signingConfig{Enabled: true}, signingDeps{})
+func TestVerifyResponseNeverReplaysGenerationPOST(t *testing.T) {
+	m := newSigningManager(signingConfig{Enabled: true, AllowUnsignedChatReplay: true}, signingDeps{})
 	// Seed a signing state so this test remains pure and performs no gate/handshake network.
 	private := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{2}, ed25519.SeedSize))
 	origin := "https://api.z.ai"
@@ -169,7 +169,7 @@ func TestVerifyRetryDoesNotThirdReplayChatPOST(t *testing.T) {
 	}
 	req := pluginapi.HTTPRequest{Method: http.MethodPost, URL: origin + "/v1/chat", Headers: http.Header{"X-Session-Id": {"s"}}}
 	resp, err := executeSignedHTTP(context.Background(), m, upstreamCredential{SigningCredential: credential}, req, send)
-	if err != nil || resp.StatusCode != 401 || calls != 2 {
+	if err != nil || resp.StatusCode != 401 || calls != 1 {
 		t.Fatalf("status=%d calls=%d err=%v", resp.StatusCode, calls, err)
 	}
 	if m.states[signingStateKey(origin, credential)].bypass {

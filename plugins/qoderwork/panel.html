@@ -173,13 +173,6 @@ button .spin{border-color:var(--on-acc);border-top-color:transparent}
 <div class="wrap">
   <h1>QoderWork 账号面板</h1>
   <div class="sub">积分余额 · CN 每日签到（09:00/21:00）· 耗尽自动关</div>
-  <div id="authBox" class="card" style="display:none;margin-bottom:16px">
-    <div style="margin-bottom:8px;color:var(--mut)">需要管理密钥（management key）才能访问账号数据。从 CPA 主面板嵌入时会自动获取，无需输入。错误密钥请勿连点，避免 IP 封禁。</div>
-    <div style="display:flex;gap:8px">
-      <input id="keyInput" type="password" placeholder="management key" class="field-input">
-      <button onclick="saveKey()">连接</button>
-    </div>
-  </div>
   <div class="bar">
     <button class="sec" id="importBtn" onclick="openImportModal()">导入 QoderWork 凭证</button>
     <button id="refreshBtn" onclick="load(true,this)">刷新数据</button>
@@ -216,56 +209,7 @@ button .spin{border-color:var(--on-acc);border-top-color:transparent}
 </div>
 <div class="toasts" id="toasts"></div>
 <script>
-const API = "/v0/management/plugins/qoderwork";
-
-/* ---------- management key acquisition (3 fallbacks, zero config) ----------
-   1) CPA main panel localStorage "cli-proxy-auth" (XOR+base64, same-origin
-      iframe embed) — same approach as cpa-plugin-key-policy.
-   2) ?key= URL param (cleaned from history after read, kept in sessionStorage).
-   3) Manual input (sessionStorage only, never persisted).
-*/
-const ENC_PREFIX = "enc::v1::";
-const SECRET_SALT = "cli-proxy-api-webui::secure-storage";
-const PANEL_STORE = "cli-proxy-auth";
-const SS_KEY = "qoderwork-mgmt-key";
-
-function _enc(t){return new TextEncoder().encode(t)}
-function _dec(b){return new TextDecoder().decode(b)}
-function _keyBytes(){try{return _enc(SECRET_SALT+"|"+window.location.host+"|"+navigator.userAgent)}catch(e){return _enc(SECRET_SALT)}}
-function _xor(d,k){const r=new Uint8Array(d.length);for(let i=0;i<d.length;i++)r[i]=d[i]^k[i%k.length];return r}
-function _b64e(b){let s="";for(let i=0;i<b.length;i++)s+=String.fromCharCode(b[i]);return btoa(s)}
-function _b64d(s){const bin=atob(s);const b=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)b[i]=bin.charCodeAt(i);return b}
-function deobfuscate(p){if(!p||!p.startsWith(ENC_PREFIX))return p;try{return _dec(_xor(_b64d(p.slice(ENC_PREFIX.length)),_keyBytes()))}catch(e){return p}}
-function isEmbedded(){try{return window.self!==window.top}catch(e){return false}}
-
-function readPanelKey(){
-  if(!isEmbedded())return null;
-  let raw;try{raw=localStorage.getItem(PANEL_STORE)}catch(e){return null}
-  if(!raw)return null;
-  try{
-    const parsed=JSON.parse(deobfuscate(raw));
-    const st=(parsed&&parsed.state)||parsed||{};
-    return typeof st.managementKey==="string"&&st.managementKey?st.managementKey:null;
-  }catch(e){return null}
-}
-function readUrlKey(){
-  const m=new URLSearchParams(window.location.search).get("key");
-  if(m){history.replaceState(null,"",window.location.pathname)}
-  return m;
-}
-function getKey(){
-  return sessionStorage.getItem(SS_KEY)||readPanelKey()||readUrlKey();
-}
-function saveKey(){
-  const v=document.getElementById("keyInput").value.trim();
-  if(!v)return;
-  sessionStorage.setItem(SS_KEY,v);
-  document.getElementById("authBox").style.display="none";
-  load(false);
-}
-function showAuth(){document.getElementById("authBox").style.display="block";const i=document.getElementById("keyInput");i&&i.focus()}
-function authHeaders(k){return k?{"Authorization":"Bearer "+k}:{}}
-/* --------------------------------------------------------------------------- */
+const PANEL_CSRF = "__QODERWORK_PANEL_CSRF__";
 
 function toast(title, kind="ok", detail=""){
   const box=document.getElementById("toasts");
@@ -361,8 +305,6 @@ function card(a){
 let currentFilter="all";
 let lastAccounts=[];
 let activeAuthId="";
-let authFailCount=0;
-let authFailUntil=0;
 // Lazy-load: fetch credits for all cards that lack them, concurrently.
 // Each card fetches independently; failed ones retry once after 2s.
 function lazyLoadCredits(accounts){
@@ -370,7 +312,7 @@ function lazyLoadCredits(accounts){
   if(!need.length) return;
   need.forEach(a=>{
     const idx=a.auth_index;
-    api(`/credits?auth_index=${encodeURIComponent(idx)}`)
+    api("credits",{auth_index:idx})
       .then(d=>{
         const acct=(d.accounts||[])[0]||d;
         if(d.error){ a.error=d.error; }
@@ -385,7 +327,7 @@ function lazyLoadCredits(accounts){
       .catch(()=>{
         // Retry once after 2s.
         setTimeout(()=>{
-          api(`/credits?auth_index=${encodeURIComponent(idx)}`)
+          api("credits",{auth_index:idx})
             .then(d=>{
               const acct=(d.accounts||[])[0]||d;
               if(acct&&acct.credits){ a.credits=acct.credits; a.exhausted=acct.exhausted; }
@@ -418,7 +360,7 @@ function updateOneCard(a){
     // flags. Re-fetch /accounts (light, cache-only) so ensureDefaultActiveAuth
     // can pick the correct card — first load may have selected an account that
     // turned out to be exhausted.
-    api("/accounts").then(d=>{
+    api("accounts").then(d=>{
       if(!d||d.error) return;
       const fresh=d.accounts||[];
       activeAuthId=d.active_auth||activeAuthId;
@@ -544,59 +486,17 @@ function renderSummary(accounts){
     `}
   `;
 }
-async function api(path, opts={}){
-  const k=getKey();
-  if(!k){
-    showAuth();
-    throw new Error("需要管理密钥");
-  }
-  if(Date.now()<authFailUntil){
-    throw new Error("认证多次失败，请稍后重试（防 IP 封禁）");
-  }
-  const r=await fetch(API+path,{...opts,credentials:'omit',headers:{...(opts.headers||{}),...authHeaders(k)}});
-  if(r.status===401){
-    authFailCount++;
-    sessionStorage.removeItem(SS_KEY);
-    showAuth();
-    if(authFailCount>=3){
-      authFailUntil=Date.now()+60000;
-      authFailCount=0;
-      throw new Error("认证多次失败，请检查管理密钥后 60s 再试");
-    }
-    throw new Error("management key 无效或缺失");
-  }
-  if(r.status===403){
-    authFailCount++;
-    let body="";
-    try{body=await r.text()}catch(_){}
-    if(/IP banned|too many failed/i.test(body)){
-      // Prefer upstream wait window (e.g. "Try again in 27m10s") when present.
-      let waitMs=60000;
-      const m=body.match(/(\d+)\s*m(?:in(?:ute)?s?)?\s*(\d+)\s*s/i)||body.match(/(\d+)\s*m/i);
-      if(m){
-        const mins=parseInt(m[1],10)||0;
-        const secs=m[2]?parseInt(m[2],10):0;
-        waitMs=Math.min(Math.max((mins*60+secs)*1000, 30000), 30*60*1000);
-      }
-      authFailUntil=Date.now()+waitMs;
-      throw new Error(body.trim()||"IP 被封禁，请稍后再试");
-    }
-    if(authFailCount>=3){
-      authFailUntil=Date.now()+60000;
-      authFailCount=0;
-    }
-    throw new Error(body.trim()||"禁止访问 (403)");
-  }
-  authFailCount=0;
-  return r.json();
+async function api(action, params={}){
+  const body=new URLSearchParams({action,csrf:PANEL_CSRF});
+  Object.entries(params).forEach(([key,value])=>body.set(key,String(value)));
+  const r=await fetch(location.pathname,{method:"POST",credentials:"same-origin",cache:"no-store",headers:{"Content-Type":"application/x-www-form-urlencoded","X-Requested-With":"qoderwork-panel"},body:body.toString()});
+  let result;
+  try{result=await r.json()}catch(_){result={error:"HTTP "+r.status}}
+  if(!r.ok)throw new Error(result.error||("HTTP "+r.status));
+  return result;
 }
 async function load(force, btn){
   const g=document.getElementById("grid");
-  if(!getKey()){
-    showAuth();
-    g.innerHTML='<div class="loading">请先填写 management key</div>';
-    return;
-  }
   // 刷新按钮：loading 态 + 右上角 toast。原先 force 路径静默调 /refresh，
   // 成功/失败都无反馈（签到按钮有 toast，刷新没有）。
   if(force){
@@ -607,8 +507,8 @@ async function load(force, btn){
     // force 时 /refresh 已返回完整 dashboard（buildDashboard(true)），
     // 不必再打 /accounts（之前多一次请求且吞掉 refresh 错误）。
     const d = force
-      ? await api("/refresh", {method:"POST"})
-      : await api("/accounts");
+      ? await api("refresh")
+      : await api("accounts");
     const at=document.getElementById("autoToggle"); if(at) at.checked=!!d.checkin_auto;
     const st=document.getElementById("svtime"); if(st) st.textContent=d.server_time?("服务器时间 "+d.server_time):"";
     if(d.error){
@@ -675,7 +575,7 @@ function isCheckinDoneResult(res){
 async function checkin(idx, btn){
   busy(btn,true);
   try{
-    const d=await api("/checkin",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({auth_index:idx})});
+    const d=await api("checkin",{auth_index:idx});
     const res=(d.results||[])[0]||{};
     checkinResultToast(res);
     if(isCheckinDoneResult(res)){
@@ -700,7 +600,8 @@ async function checkin(idx, btn){
 async function claimPro(idx, btn){
   busy(btn,true);
   try{
-    const d=await api("/claim-pro",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({auth_index:idx})});
+    if(!window.confirm("确认尝试为此账号领取一次性 Pro 升级包？")){busy(btn,false);return}
+    const d=await api("claim-pro",{auth_index:idx,confirm:"claim-pro"});
     const name=d.nickname||"账号";
     if(d.error){toast(name+"：领取失败","err",d.error);busy(btn,false);return}
     if(d.success){toast(name+"：领取成功","ok","Pro 升级包已领取"+(d.credits?(" · 积分 "+(d.credits.total_remain||0)):""))}
@@ -714,7 +615,7 @@ async function claimPro(idx, btn){
 async function selectAuth(idx, btn){
   busy(btn,true);
   try{
-    const d=await api("/select",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({auth_index:idx})});
+    const d=await api("select",{auth_index:idx});
     if(d.error){
       toast("选用失败","err",d.error);
       busy(btn,false);
@@ -741,7 +642,7 @@ async function selectAuth(idx, btn){
 async function refreshCredits(idx, btn){
   busy(btn,true);
   try{
-    const d=await api(`/credits?auth_index=${encodeURIComponent(idx)}`);
+    const d=await api("credits",{auth_index:idx});
     const acct=(d.accounts||[])[0]||d;
     if(d.error||acct&&acct.error){
       toast("刷新失败","err",d.error||(acct&&acct.error)||"未知错误");
@@ -770,7 +671,7 @@ async function checkinAll(btn){
   busy(btn,true);
   try{
     // Backend prefilters: already-checked skipped; only CN-need-checkin run.
-    const d=await api("/checkin",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+    const d=await api("checkin");
     const rs=d.results||[];
     const s=d.summary||{};
     const ok=Number(s.success??rs.filter(x=>x.success&&x.reason!=="already"&&!x.skipped).length)||0;
@@ -813,7 +714,7 @@ async function checkinAll(btn){
 
 
 async function toggleAuto(on){
-  try{const d=await api("/checkin/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled:on})});toast("自动签到已"+(d.checkin_auto?"开启 ✅":"关闭 ⏸"),"ok")}catch(e){toast("设置失败","err",e.message)}
+  try{const d=await api("checkin-config",{enabled:on});toast("自动签到已"+(d.checkin_auto?"开启 ✅":"关闭 ⏸"),"ok")}catch(e){toast("设置失败","err",e.message)}
 }
 function openImportModal(){
   const m=document.getElementById("importModal");
@@ -833,7 +734,7 @@ async function importAuth(btn){
   if(!pat.startsWith("pt-")){toast("PAT 必须以 pt- 开头","warn");return}
   busy(btn,true);
   try{
-    const d=await api("/import",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({pat})});
+    const d=await api("import",{pat});
     if(d.success){
       toast("导入成功","ok",(d.nickname||d.uid||"")+ " → "+(d.file||d.name||""));
       document.getElementById("importPAT").value="";
@@ -843,17 +744,12 @@ async function importAuth(btn){
   }catch(e){toast("导入请求失败","err",e.message)}
   busy(btn,false);
 }
-document.getElementById("keyInput").addEventListener("keydown",e=>{if(e.key==="Enter")saveKey()});
 document.addEventListener("keydown",e=>{
   if(e.key=="Escape"&&document.getElementById("importModal").classList.contains("show")) closeImportModal();
 });
 /* Start theme sync watcher (parent MutationObserver + standalone prefers-color-scheme listener). */
 if(window.__wbThemeSync)window.__wbThemeSync();
-if(getKey()){
-  load(false);
-}else{
-  showAuth();
-}
+load(false);
 </script>
 </body>
 </html>

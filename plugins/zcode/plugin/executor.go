@@ -178,6 +178,105 @@ func rewritePayloadModel(payload []byte) []byte {
 	return payload
 }
 
+func normalizeAnthropicNonStreamResponse(raw []byte) ([]byte, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.HasPrefix(trimmed, []byte("data:")) {
+		return raw, nil
+	}
+	var message struct {
+		ID      string `json:"id"`
+		Type    string `json:"type"`
+		Role    string `json:"role"`
+		Model   string `json:"model"`
+		Content []struct {
+			Type     string          `json:"type"`
+			Text     string          `json:"text"`
+			Thinking string          `json:"thinking"`
+			ID       string          `json:"id"`
+			Name     string          `json:"name"`
+			Input    json.RawMessage `json:"input"`
+		} `json:"content"`
+		StopReason string          `json:"stop_reason"`
+		Usage      json.RawMessage `json:"usage"`
+	}
+	if err := json.Unmarshal(raw, &message); err != nil {
+		return nil, err
+	}
+	if message.Type != "message" {
+		return raw, nil
+	}
+	marshalFrame := func(value any) ([]byte, error) {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return nil, err
+		}
+		return append(append([]byte("data: "), encoded...), []byte("\n\n")...), nil
+	}
+	var out []byte
+	start, err := marshalFrame(map[string]any{
+		"type": "message_start",
+		"message": map[string]any{
+			"id": message.ID, "type": "message", "role": message.Role,
+			"model": message.Model, "content": []any{}, "usage": json.RawMessage(message.Usage),
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, start...)
+	for index, block := range message.Content {
+		contentBlock := map[string]any{"type": block.Type}
+		delta := map[string]any{}
+		switch block.Type {
+		case "thinking":
+			contentBlock["thinking"] = ""
+			delta["type"] = "thinking_delta"
+			delta["thinking"] = block.Thinking
+		case "text":
+			contentBlock["text"] = ""
+			delta["type"] = "text_delta"
+			delta["text"] = block.Text
+		case "tool_use":
+			contentBlock["id"] = block.ID
+			contentBlock["name"] = block.Name
+			contentBlock["input"] = map[string]any{}
+			delta["type"] = "input_json_delta"
+			if len(block.Input) == 0 {
+				delta["partial_json"] = "{}"
+			} else {
+				delta["partial_json"] = string(block.Input)
+			}
+		default:
+			continue
+		}
+		for _, event := range []map[string]any{
+			{"type": "content_block_start", "index": index, "content_block": contentBlock},
+			{"type": "content_block_delta", "index": index, "delta": delta},
+			{"type": "content_block_stop", "index": index},
+		} {
+			frame, frameErr := marshalFrame(event)
+			if frameErr != nil {
+				return nil, frameErr
+			}
+			out = append(out, frame...)
+		}
+	}
+	delta, err := marshalFrame(map[string]any{
+		"type":  "message_delta",
+		"delta": map[string]any{"stop_reason": message.StopReason},
+		"usage": json.RawMessage(message.Usage),
+	})
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, delta...)
+	stop, err := marshalFrame(map[string]any{"type": "message_stop"})
+	if err != nil {
+		return nil, err
+	}
+	return append(out, stop...), nil
+}
+
 func executeHTTP(ctx context.Context, client pluginapi.HostHTTPClient, hostCallbackID string, request pluginapi.HTTPRequest) (pluginapi.HTTPResponse, error) {
 	if client != nil {
 		return client.Do(ctx, request)
@@ -243,7 +342,15 @@ func executeSignedHTTP(ctx context.Context, manager *signingManager, credential 
 	if err != nil || !first.Signed || !isSigningVerifyFailure(resp.StatusCode, resp.Body) {
 		return resp, err
 	}
+
+	// A VERIFY response proves that the upstream received and processed the
+	// request. Invalidate the cached signing key, but never replay a generation
+	// request whose body may already have triggered computation or billing.
 	manager.invalidate(request.URL, credential.SigningCredential, false)
+	if !isSafeUnsignedReplay(request.Method, request.URL) {
+		return resp, nil
+	}
+
 	second, err := manager.sign(ctx, request.URL, baseHeaders, credential.SigningCredential, zcodeClientVersion)
 	if err != nil {
 		return pluginapi.HTTPResponse{}, err
@@ -253,15 +360,10 @@ func executeSignedHTTP(ctx context.Context, manager *signingManager, credential 
 	if err != nil || !second.Signed || !isSigningVerifyFailure(resp.StatusCode, resp.Body) {
 		return resp, err
 	}
-	// A second VERIFY failure invalidates only the cached key. Never persist an
-	// unsigned bypass: the next dangerous request must attempt signing again.
+
+	// A second VERIFY failure invalidates only the cached key. Safe methods may
+	// make one final unsigned attempt; generation POST requests never reach here.
 	manager.invalidate(request.URL, credential.SigningCredential, false)
-	manager.mu.Lock()
-	allowChatReplay := manager.cfg.AllowUnsignedChatReplay
-	manager.mu.Unlock()
-	if !isSafeUnsignedReplay(request.Method, request.URL) && !(allowChatReplay && isExplicitChatSigningPath(request.Method, request.URL)) {
-		return resp, nil
-	}
 	request.Headers = baseHeaders
 	return send(request)
 }
@@ -319,8 +421,12 @@ func handleExecutorExecute(request []byte) ([]byte, error) {
 			return nil, err
 		}
 		if resp.StatusCode < http.StatusBadRequest {
+			payload, normalizeErr := normalizeAnthropicNonStreamResponse(resp.Body)
+			if normalizeErr != nil {
+				return nil, fmt.Errorf("invalid Anthropic non-stream response: %w", normalizeErr)
+			}
 			return okEnvelope(pluginapi.ExecutorResponse{
-				Payload:  resp.Body,
+				Payload:  payload,
 				Headers:  resp.Headers,
 				Metadata: map[string]any{"status_code": resp.StatusCode, "route": map[bool]string{true: "coding-plan", false: "api-key"}[credential.CodingPlan]},
 			})
