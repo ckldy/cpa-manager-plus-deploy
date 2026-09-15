@@ -21,7 +21,8 @@ const (
 	oauthCallbackMaxBody  = 8 * 1024
 	oauthCallbackMaxField = 4096
 	oauthBridgeOrigin     = "https://chat.z.ai"
-	oauthFirstPartyOrigin = "https://cpa.vcncv.com"
+	// 模板值：构建前替换为你自己部署的公开 Origin（用于回调 Origin 白名单）。
+	oauthFirstPartyOrigin = "https://cpa.example.com"
 )
 
 type hostAuthListResponse struct {

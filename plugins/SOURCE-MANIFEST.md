@@ -16,3 +16,7 @@ Synced: 2026-08-30
 - Runtime auth files, logs, `.so` files, generated bundles and dependencies are intentionally excluded.
 - Upstream licenses remain in the corresponding vendored plugin directories.
 - Test credentials were replaced with unmistakably invalid fixtures before publication; this can change the sanitized tree digest without changing production behavior.
+
+## Notes
+
+- 2026-09-15: snapshot additionally includes the off-peak ticket-id status-match fix (live-tested, deployed to production 2026-08-30) and replaces the private OAuth first-party origin literal with the placeholder `https://cpa.example.com`. Before building for your own deployment, set `oauthFirstPartyOrigin` in `plugins/zcode/plugin/util.go` to your public panel origin; the digest column above refers to the 2026-08-30 snapshot.

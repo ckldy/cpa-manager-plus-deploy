@@ -323,7 +323,7 @@ func TestOAuthCallbackManualFallbackValidatesCustomScheme(t *testing.T) {
 	raw, _ := json.Marshal(pluginapi.ManagementRequest{
 		Method:  http.MethodPost,
 		Path:    "/v0/resource/plugins/zcode/callback",
-		Headers: http.Header{"Content-Type": []string{"application/x-www-form-urlencoded"}, "Origin": []string{"https://cpa.vcncv.com"}},
+		Headers: http.Header{"Content-Type": []string{"application/x-www-form-urlencoded"}, "Origin": []string{"https://cpa.example.com"}},
 		Body:    []byte(form.Encode()),
 	})
 	out, err := handleManagement(raw)
