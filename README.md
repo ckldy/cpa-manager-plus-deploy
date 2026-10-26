@@ -8,12 +8,12 @@
 
 | 组件 | 镜像 | 本机当前版本 | 端口 |
 |---|---|---|---|
-| CLIProxyAPI（定制内核） | `${CPA_IMAGE}`（默认上游；生产定制镜像需人工构建） | 以镜像清单为准 | 8317 |
-| CPA-Manager-Plus（面板） | `seakee/cpa-manager-plus:latest` | 滚动更新 | 18317 |
+| CLIProxyAPI（定制内核） | `${CPA_IMAGE}`（生产定制镜像） | `v8.0.44-patched`（构建补丁与说明见 `kernel/`） | 8317 |
+| CPA-Manager-Plus（面板） | `seakee/cpa-manager-plus:latest` | `v1.14.9` | 18317 |
 | ZCode Solver | `plugins/zcode/solver` 本地构建 | 源码随仓库 | 仅容器内 8777 |
 | 插件 | zcode / bai / qoderwork / traework / workbuddy / privacyfilter | 各自独立目录，源码与生产二进制对应关系见 `plugins/SOURCE-MANIFEST.md` | — |
 
-> 镜像 tag 用 `latest`，版本会漂移。出问题时按上面记录回滚到对应 tag。
+> 生产环境内核建议使用 `kernel/` 下的补丁自行构建，保证高可靠调度与探针兼容；面板镜像推荐固定到稳定 tag（如 `v1.14.9`）。
 
 ## 🚀 快速部署（curl | bash，全新机器推荐）
 
@@ -44,6 +44,9 @@ cpa-manager-plus-deploy/
 ├── compose.yaml                     # 双容器编排（端口/镜像走 .env）
 ├── .env.example                     # 环境变量模板（无真实值）
 ├── .gitignore                       # 屏蔽 secrets/ *.env 等
+├── kernel/                          # 定制内核补丁与构建指南
+│   ├── patchset5-v8.diff            # CLIProxyAPI 增强补丁集（对齐 v8.0.44）
+│   └── BUILD.md                     # 可复现构建镜像操作手册
 ├── plugins/                         # 每个插件一个独立目录
 │   ├── zcode/                       # Go 插件 + 独立 solver
 │   ├── bai/
@@ -160,7 +163,7 @@ cd cpa-manager-plus-deploy
 
 ## 四、更新策略
 
-普通更新器**只更新面板和 solver 基础镜像**，不会覆盖 CPA 内核。若 `CPA_IMAGE` 是 `local/*`、`*custom*` 或开发构建，必须先基于新版核心重新合并插件宿主改造、测试并保留回滚镜像，再人工升级。不要对定制核心执行无差别 `docker compose pull && docker compose up -d`。
+普通更新器**只更新面板和 solver 基础镜像**，不会覆盖 CPA 内核。若 `CPA_IMAGE` 是 `local/*`、`*custom*` 或开发构建，必须先基于新版核心重新合并插件宿主改造、测试并保留回滚镜像（操作可参考 `kernel/BUILD.md`），再人工升级。不要对定制核心执行无差别 `docker compose pull && docker compose up -d`。
 
 ZCode 的动态路由、付费回退、双凭据保留、签名重放、Off-Peak、自动领取与验证码求解默认全部关闭；需要时必须逐项审核后手工启用。
 

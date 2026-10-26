@@ -1,0 +1,391 @@
+diff --git a/internal/pluginhost/management.go b/internal/pluginhost/management.go
+index 72e9c12ed..3694c180b 100644
+--- a/internal/pluginhost/management.go
++++ b/internal/pluginhost/management.go
+@@ -287,12 +287,12 @@ func (h *Host) ServeManagementHTTP(w http.ResponseWriter, r *http.Request) bool
+ 	return true
+ }
+ 
+-// ServeResourceHTTP dispatches an unauthenticated browser-navigable resource request to a plugin route.
++// ServeResourceHTTP dispatches browser-navigable GET and form POST resource requests to a plugin route.
+ func (h *Host) ServeResourceHTTP(w http.ResponseWriter, r *http.Request) bool {
+ 	if h == nil || w == nil || r == nil || r.URL == nil {
+ 		return false
+ 	}
+-	if !strings.EqualFold(r.Method, http.MethodGet) {
++	if !strings.EqualFold(r.Method, http.MethodGet) && !strings.EqualFold(r.Method, http.MethodPost) {
+ 		return false
+ 	}
+ 	key := managementRouteKey(http.MethodGet, r.URL.Path)
+@@ -303,11 +303,26 @@ func (h *Host) ServeResourceHTTP(w http.ResponseWriter, r *http.Request) bool {
+ 		return false
+ 	}
+ 
++	var body []byte
++	if r.Body != nil {
++		var errRead error
++		body, errRead = io.ReadAll(r.Body)
++		if errRead != nil {
++			http.Error(w, "failed to read plugin resource request body", http.StatusBadRequest)
++			return true
++		}
++		if errClose := r.Body.Close(); errClose != nil {
++			log.Warnf("pluginhost: failed to close plugin resource request body: %v", errClose)
++		}
++	}
++	r.Body = io.NopCloser(bytes.NewReader(body))
++
+ 	resp, errHandle := h.callResourceHandler(r.Context(), record, pluginapi.ManagementRequest{
+-		Method:  http.MethodGet,
++		Method:  r.Method,
+ 		Path:    r.URL.Path,
+ 		Headers: cloneHeader(r.Header),
+ 		Query:   cloneValues(r.URL.Query()),
++		Body:    bytes.Clone(body),
+ 	})
+ 	if errHandle != nil {
+ 		log.Warnf("pluginhost: resource handler %s failed: %v", record.pluginID, errHandle)
+diff --git a/internal/pluginhost/management_test.go b/internal/pluginhost/management_test.go
+index 642610e93..07108c218 100644
+--- a/internal/pluginhost/management_test.go
++++ b/internal/pluginhost/management_test.go
+@@ -6,6 +6,7 @@ import (
+ 	"html"
+ 	"net/http"
+ 	"net/http/httptest"
++	"strings"
+ 	"testing"
+ 
+ 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
+@@ -301,6 +302,14 @@ func TestServeResourceHTTPDispatchesPluginResource(t *testing.T) {
+ 					if req.Path != "/v0/resource/plugins/resource/status" {
+ 						t.Fatalf("resource request path = %q, want normalized resource path", req.Path)
+ 					}
++					if req.Method == http.MethodPost {
++						if got := string(req.Body); got != "action=claim" {
++							t.Fatalf("resource POST body = %q, want form body", got)
++						}
++						if got := req.Headers.Get("Content-Type"); got != "application/x-www-form-urlencoded" {
++							t.Fatalf("resource POST content type = %q", got)
++						}
++					}
+ 					return pluginapi.ManagementResponse{
+ 						Headers: http.Header{"Content-Type": []string{"text/html; charset=utf-8"}},
+ 						Body:    []byte("<!doctype html><title>resource</title>"),
+@@ -322,6 +331,16 @@ func TestServeResourceHTTPDispatchesPluginResource(t *testing.T) {
+ 	if got := rec.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
+ 		t.Fatalf("Content-Type = %q, want text/html; charset=utf-8", got)
+ 	}
++
++	postReq := httptest.NewRequest(http.MethodPost, "/v0/resource/plugins/resource/status", strings.NewReader("action=claim"))
++	postReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
++	postRec := httptest.NewRecorder()
++	if !host.ServeResourceHTTP(postRec, postReq) {
++		t.Fatal("ServeResourceHTTP() for POST = false, want true")
++	}
++	if postRec.Code != http.StatusOK {
++		t.Fatalf("POST status = %d, want 200", postRec.Code)
++	}
+ }
+ 
+ func TestLegacyGETManagementMenuRegistersAsResource(t *testing.T) {
+diff --git a/internal/pluginhost/scheduler.go b/internal/pluginhost/scheduler.go
+index 2ed9d92e3..673303ef8 100644
+--- a/internal/pluginhost/scheduler.go
++++ b/internal/pluginhost/scheduler.go
+@@ -9,51 +9,94 @@ import (
+ )
+ 
+ func (h *Host) PickAuth(ctx context.Context, req pluginapi.SchedulerPickRequest) (pluginapi.SchedulerPickResponse, bool, error) {
+-	record := h.schedulerRecord()
+-	if record == nil {
+-		return pluginapi.SchedulerPickResponse{}, false, nil
+-	}
++	// Ask every installed scheduler, not just the highest-priority one. With a
++	// single scheduler nothing changes; with several installed this is what stops
++	// the first (by priority, then id) from silently shadowing the rest, whose
++	// routing — and any policy layered on it, such as cost-tier exploration —
++	// could otherwise never take effect no matter how it was configured.
++	//
++	// Isolation comes from the plugin contract rather than a provider registry: a
++	// scheduler plugin filters req.Candidates down to the provider it serves and
++	// answers Handled:false when none of them are its own. So each provider's
++	// plugin claims its own requests and declines everyone else's.
++	var firstErr error
++	for _, record := range h.schedulerRecords() {
++		resp, handled, errPick := h.callScheduler(ctx, record, req)
++		if errPick != nil {
++			// callScheduler has already logged this. Remember it and keep going:
++			// one plugin's failure must not decide the request for providers it
++			// knows nothing about.
++			if firstErr == nil {
++				firstErr = errPick
++			}
++			continue
++		}
++		if !handled {
++			// The record went stale or is fused: this plugin is gone, ask the next.
++			continue
++		}
++		if !resp.Handled {
++			// Deliberate deferral — this scheduler is not for this request. This
++			// is the common case for every plugin but one, and is not an error.
++			continue
++		}
+ 
+-	resp, handled, errPick := h.callScheduler(ctx, *record, req)
+-	if errPick != nil || !handled {
+-		return resp, handled, errPick
+-	}
+-	if !resp.Handled {
+-		return pluginapi.SchedulerPickResponse{}, false, nil
++		resp, valid, reason := normalizeSchedulerResponse(resp, req)
++		if !valid {
++			log.WithField("plugin_id", record.id).Warnf("pluginhost: scheduler returned invalid response: %s", reason)
++			continue
++		}
++		return resp, true, nil
+ 	}
+ 
+-	resp, valid, reason := normalizeSchedulerResponse(resp, req)
+-	if !valid {
+-		log.WithField("plugin_id", record.id).Warnf("pluginhost: scheduler returned invalid response: %s", reason)
+-		return pluginapi.SchedulerPickResponse{}, false, nil
++	if firstErr != nil {
++		// Nothing claimed the request and at least one scheduler failed. Surface
++		// the failure instead of reporting "no scheduler wanted this", which is
++		// what the single-scheduler code did and what callers expect: they turn it
++		// into an unavailable-auth error rather than quietly re-routing.
++		return pluginapi.SchedulerPickResponse{}, true, firstErr
+ 	}
+-	return resp, true, nil
++	return pluginapi.SchedulerPickResponse{}, false, nil
+ }
+ 
++// HasScheduler reports whether any active plugin can schedule.
+ func (h *Host) HasScheduler() bool {
+-	return h.schedulerRecord() != nil
++	return len(h.schedulerRecords()) > 0
+ }
+ 
++// SchedulerWantsAcrossPriorities reports whether any installed scheduler asks to
++// see credentials from every priority tier rather than only the top one. With
++// several schedulers the union is the right answer: one of them needing the wider
++// candidate set is a reason to build it.
+ func (h *Host) SchedulerWantsAcrossPriorities() bool {
+-	record := h.schedulerRecord()
+-	if record == nil {
+-		return false
++	for _, record := range h.schedulerRecords() {
++		if schedulerWantsAcrossPriorities(record.plugin.Capabilities) {
++			return true
++		}
+ 	}
+-	return schedulerWantsAcrossPriorities(record.plugin.Capabilities)
++	return false
+ }
+ 
+-func (h *Host) schedulerRecord() *capabilityRecord {
++// schedulerRecords returns every active plugin that declares the Scheduler
++// capability, in activeRecords order. That order is priority descending then
++// plugin id ascending (see sortRecords), so plugin priority keeps its meaning:
++// the highest-priority scheduler still gets first refusal.
++//
++// The list is computed per call rather than cached: activeRecords already
++// snapshots, and a cached scheduler list would go stale the moment a plugin is
++// fused or reloaded.
++func (h *Host) schedulerRecords() []capabilityRecord {
+ 	if h == nil {
+ 		return nil
+ 	}
++	var out []capabilityRecord
+ 	for _, record := range h.activeRecords() {
+ 		if h.isPluginFused(record.id) || record.plugin.Capabilities.Scheduler == nil {
+ 			continue
+ 		}
+-		copyRecord := record
+-		return &copyRecord
++		out = append(out, record)
+ 	}
+-	return nil
++	return out
+ }
+ 
+ func (h *Host) callScheduler(ctx context.Context, record capabilityRecord, req pluginapi.SchedulerPickRequest) (resp pluginapi.SchedulerPickResponse, handled bool, err error) {
+diff --git a/internal/pluginhost/scheduler_test.go b/internal/pluginhost/scheduler_test.go
+index 6c366e53d..a7a8accba 100644
+--- a/internal/pluginhost/scheduler_test.go
++++ b/internal/pluginhost/scheduler_test.go
+@@ -90,7 +90,11 @@ func TestHostPickAuthPanicFusesAndFallsBack(t *testing.T) {
+ 	}
+ }
+ 
+-func TestHostPickAuthUnhandledDoesNotCallLowerPriorityScheduler(t *testing.T) {
++// A high-priority scheduler that declines must not stop the lower-priority one
++// from being asked. The previous expectation here ("low calls = 0") was the
++// single-scheduler limitation written down as a test; with several schedulers
++// installed that behaviour makes every plugin but one dead code.
++func TestHostPickAuthFallsThroughToLowerPriorityScheduler(t *testing.T) {
+ 	var lowCalls int
+ 	host := newHostWithRecords(
+ 		capabilityRecord{
+@@ -110,15 +114,98 @@ func TestHostPickAuthUnhandledDoesNotCallLowerPriorityScheduler(t *testing.T) {
+ 		},
+ 	)
+ 
+-	_, handled, errPick := host.PickAuth(context.Background(), schedulerRequest("auth-low"))
++	resp, handled, errPick := host.PickAuth(context.Background(), schedulerRequest("auth-low"))
+ 	if errPick != nil {
+ 		t.Fatalf("PickAuth() error = %v, want nil", errPick)
+ 	}
+-	if handled {
+-		t.Fatal("PickAuth() handled = true, want false")
++	if !handled {
++		t.Fatal("PickAuth() handled = false, want true from the lower-priority scheduler")
+ 	}
+-	if lowCalls != 0 {
+-		t.Fatalf("low calls = %d, want 0", lowCalls)
++	if resp.AuthID != "auth-low" {
++		t.Fatalf("PickAuth() AuthID = %q, want auth-low", resp.AuthID)
+ 	}
++	if lowCalls != 1 {
++		t.Fatalf("low calls = %d, want 1 (it must be asked once the higher-priority one declined)", lowCalls)
++	}
++}
++
++// Every scheduler is asked, in priority order, until one claims the request.
++func TestHostPickAuthAsksEverySchedulerUntilOneClaims(t *testing.T) {
+ 	var order []string
+ 	decline := func(id string) schedulerFunc {
+ 		return func(context.Context, pluginapi.SchedulerPickRequest) (pluginapi.SchedulerPickResponse, error) {
+ 			order = append(order, id)
+ 			return pluginapi.SchedulerPickResponse{Handled: false}, nil
+ 		}
+ 	}
+ 	host := newHostWithRecords(
+ 		capabilityRecord{id: "first", priority: 30, plugin: pluginapi.Plugin{Capabilities: pluginapi.Capabilities{Scheduler: decline("first")}}},
+ 		capabilityRecord{id: "second", priority: 20, plugin: pluginapi.Plugin{Capabilities: pluginapi.Capabilities{Scheduler: decline("second")}}},
+ 		capabilityRecord{id: "third", priority: 10, plugin: pluginapi.Plugin{Capabilities: pluginapi.Capabilities{Scheduler: schedulerFunc(func(context.Context, pluginapi.SchedulerPickRequest) (pluginapi.SchedulerPickResponse, error) {
+ 			order = append(order, "third")
+ 			return pluginapi.SchedulerPickResponse{Handled: true, AuthID: "auth-third"}, nil
+ 		})}}},
+ 	)
+ 
+ 	resp, handled, errPick := host.PickAuth(context.Background(), schedulerRequest("auth-third"))
+ 	if errPick != nil || !handled {
+ 		t.Fatalf("PickAuth() = (%v, %v), want handled with no error", handled, errPick)
+ 	}
+ 	if resp.AuthID != "auth-third" {
+ 		t.Fatalf("PickAuth() AuthID = %q, want auth-third", resp.AuthID)
+ 	}
+ 	if strings.Join(order, ",") != "first,second,third" {
+ 		t.Fatalf("call order = %v, want first,second,third (priority order, stop at the claim)", order)
+ 	}
+ }
+ 
++// A scheduler that errors must not veto a later one that can answer. The error is
++// only surfaced when nobody claimed the request (covered by
++// TestHostPickAuthReturnsSchedulerError for the single-scheduler case).
++func TestHostPickAuthErrorDoesNotBlockAnotherScheduler(t *testing.T) {
+ 	host := newHostWithRecords(
+ 		capabilityRecord{
+ 			id:       "broken",
+ 			priority: 10,
+ 			plugin: pluginapi.Plugin{Capabilities: pluginapi.Capabilities{Scheduler: schedulerFunc(func(context.Context, pluginapi.SchedulerPickRequest) (pluginapi.SchedulerPickResponse, error) {
+ 				return pluginapi.SchedulerPickResponse{}, errors.New("tenant quota exhausted")
+ 			})}},
+ 		},
+ 		capabilityRecord{
+ 			id:       "healthy",
+ 			priority: 1,
+ 			plugin: pluginapi.Plugin{Capabilities: pluginapi.Capabilities{Scheduler: schedulerFunc(func(context.Context, pluginapi.SchedulerPickRequest) (pluginapi.SchedulerPickResponse, error) {
+ 				return pluginapi.SchedulerPickResponse{Handled: true, AuthID: "auth-healthy"}, nil
+ 			})}},
+ 		},
+ 	)
+ 
+ 	resp, handled, errPick := host.PickAuth(context.Background(), schedulerRequest("auth-healthy"))
+ 	if errPick != nil {
+ 		t.Fatalf("PickAuth() error = %v, want nil (a healthy scheduler answered)", errPick)
+ 	}
+ 	if !handled || resp.AuthID != "auth-healthy" {
+ 		t.Fatalf("PickAuth() = (%q, %v), want auth-healthy handled", resp.AuthID, handled)
+ 	}
+ }
+ 
++// Two schedulers that both decline still defer to the built-in scheduler.
++func TestHostPickAuthAllDeclineDefers(t *testing.T) {
+ 	host := newHostWithRecords(
+ 		capabilityRecord{id: "a", priority: 10, plugin: pluginapi.Plugin{Capabilities: pluginapi.Capabilities{Scheduler: schedulerFunc(func(context.Context, pluginapi.SchedulerPickRequest) (pluginapi.SchedulerPickResponse, error) {
+ 			return pluginapi.SchedulerPickResponse{Handled: false}, nil
+ 		})}}},
+ 		capabilityRecord{id: "b", priority: 1, plugin: pluginapi.Plugin{Capabilities: pluginapi.Capabilities{Scheduler: schedulerFunc(func(context.Context, pluginapi.SchedulerPickRequest) (pluginapi.SchedulerPickResponse, error) {
+ 			return pluginapi.SchedulerPickResponse{Handled: false}, nil
+ 		})}}},
+ 	)
+ 
+ 	_, handled, errPick := host.PickAuth(context.Background(), schedulerRequest("auth-1"))
+ 	if errPick != nil {
+ 		t.Fatalf("PickAuth() error = %v, want nil", errPick)
+ 	}
+ 	if handled {
+ 		t.Fatal("PickAuth() handled = true, want false so the built-in scheduler runs")
+ 	}
+ }
+ 
+diff --git a/internal/registry/model_registry.go b/internal/registry/model_registry.go
+index 8a4bf7c15..1212cc3c7 100644
+--- a/internal/registry/model_registry.go
++++ b/internal/registry/model_registry.go
+@@ -1658,8 +1658,12 @@ func (r *ModelRegistry) convertModelToMap(model *ModelInfo, handlerType string)
+ 
+ 	switch handlerType {
+ 	case "openai":
++		publicID := model.ID
++		if model.OwnedBy == "bai" && strings.HasSuffix(strings.TrimSpace(model.DisplayName), " (free)") && !strings.HasSuffix(publicID, " (free)") {
++			publicID += " (free)"
++		}
+ 		result := map[string]any{
+-			"id":       model.ID,
++			"id":       publicID,
+ 			"object":   "model",
+ 			"owned_by": model.OwnedBy,
+ 		}
+diff --git a/internal/registry/model_registry_cache_test.go b/internal/registry/model_registry_cache_test.go
+index fb49e1f4a..cdb806af6 100644
+--- a/internal/registry/model_registry_cache_test.go
++++ b/internal/registry/model_registry_cache_test.go
+@@ -98,3 +98,33 @@ func TestGetAvailableModelsInvalidatesCacheOnRegistryChanges(t *testing.T) {
+ 		t.Fatalf("expected model to reappear after resume, got %d", len(models))
+ 	}
+ }
++
++func TestOpenAIModelMapAddsBAIFreeSuffix(t *testing.T) {
+ 	r := newTestModelRegistry()
+ 	free := r.convertModelToMap(&ModelInfo{
+ 		ID:          "bai-glm-5.3-flash",
+ 		OwnedBy:     "bai",
+ 		DisplayName: "B.AI GLM-5.3 Flash (free)",
+ 	}, "openai")
+ 	if got := free["id"]; got != "bai-glm-5.3-flash (free)" {
+ 		t.Fatalf("free id = %v", got)
+ 	}
+ 
+ 	premium := r.convertModelToMap(&ModelInfo{
+ 		ID:          "bai-glm-5.3",
+ 		OwnedBy:     "bai",
+ 		DisplayName: "B.AI GLM-5.3",
+ 	}, "openai")
+ 	if got := premium["id"]; got != "bai-glm-5.3" {
+ 		t.Fatalf("premium id = %v", got)
+ 	}
+ 
+ 	other := r.convertModelToMap(&ModelInfo{
+ 		ID:          "other-model",
+ 		OwnedBy:     "other",
+ 		DisplayName: "Other Model (free)",
+ 	}, "openai")
+ 	if got := other["id"]; got != "other-model" {
+ 		t.Fatalf("non-bai id = %v", got)
+ 	}
+ }
