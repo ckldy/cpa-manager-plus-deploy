@@ -8,7 +8,7 @@
 
 | 组件 | 镜像 | 本机当前版本 | 端口 |
 |---|---|---|---|
-| CLIProxyAPI（定制内核） | `${CPA_IMAGE}`（生产定制镜像） | `v8.0.44-patched`（构建补丁与说明见 `kernel/`） | 8317 |
+| CLIProxyAPI（定制内核） | `${CPA_IMAGE}`（生产定制镜像） | `v8.0.46-patched`（构建补丁与说明见 `kernel/`） | 8317 |
 | CPA-Manager-Plus（面板） | `seakee/cpa-manager-plus:latest` | `v1.14.9` | 18317 |
 | ZCode Solver | `plugins/zcode/solver` 本地构建 | 源码随仓库 | 仅容器内 8777 |
 | 插件 | zcode / bai / qoderwork / traework / workbuddy / privacyfilter | 各自独立目录，源码与生产二进制对应关系见 `plugins/SOURCE-MANIFEST.md` | — |
@@ -45,7 +45,7 @@ cpa-manager-plus-deploy/
 ├── .env.example                     # 环境变量模板（无真实值）
 ├── .gitignore                       # 屏蔽 secrets/ *.env 等
 ├── kernel/                          # 定制内核补丁与构建指南
-│   ├── patchset5-v8.diff            # CLIProxyAPI 增强补丁集（对齐 v8.0.44）
+│   ├── patchset5-v8.diff            # CLIProxyAPI 增强补丁集（对齐 v8.0.46）
 │   └── BUILD.md                     # 可复现构建镜像操作手册
 ├── plugins/                         # 每个插件一个独立目录
 │   ├── zcode/                       # Go 插件 + 独立 solver

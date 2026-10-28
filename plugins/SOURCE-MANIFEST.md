@@ -1,6 +1,6 @@
 # Plugin source provenance
 
-Synced: 2026-10-27 (production-matched snapshot, CPA kernel v8.0.44-patched)
+Synced: 2026-10-29 (production-matched snapshot, CPA kernel v8.0.46-patched)
 
 | Plugin | Source origin | Source revision | Production binary SHA-256 (prefix) |
 |---|---|---|---|
@@ -11,11 +11,11 @@ Synced: 2026-10-27 (production-matched snapshot, CPA kernel v8.0.44-patched)
 | WorkBuddy | production-matched source tree (0.12.35-lock-repaint-20261014) | version stamp `0.12.35-lock-repaint-20261014`, includes lock repaint, dynamic task routing, pool guarding and full panel test suite (51 tests) | `892e47b11b5ebd671f6d36d7495141ca3b9d88e3e85cdd7377c2cb215e3edd22` |
 | PrivacyFilter | https://github.com/rheodev/cpa-plugin-privacyfilter | tag `v0.2.0`, commit `a3db9d1f951d6d34cf7f00029cb71ff46a600d1f` | `94f4798ae1eb76a75681bb8dd04ed81971243fea8ba1b9f7d66139518d53e95b` |
 
-## Verification performed on the production build host (2026-10-27)
+## Verification performed on the production build host (2026-10-29)
 
 - `gofmt -l`, `go vet`, `go test -count=1`: all plugin trees green.
 - WorkBuddy Node panel test suite: 51 tests pass.
-- `CGO_ENABLED=1 go build -buildmode=c-shared`: all plugins verified compatible with CPA kernel v8.0.44 ABI (SchemaVersion 7 backward-compatible negotiation).
+- `CGO_ENABLED=1 go build -buildmode=c-shared`: all plugins verified compatible with CPA kernel v8.0.46 ABI (SchemaVersion 7 backward-compatible negotiation).
 
 ## Publication sanitization (source intentionally differs from production literals)
 

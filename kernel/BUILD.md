@@ -2,7 +2,7 @@
 
 本项目生产部署使用经过功能补丁强化的自建内核镜像（基于上游 [router-for-me/CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)）。
 
-当前最新已验证基线：**v8.0.44**（commit `1f917e77c4562623aa49e9804d999524151a2f96`）。
+当前最新已验证基线：**v8.0.46**（commit `9717e325ba6ab2c7483ea93ccb5f2047eb2e7dd5`）。
 
 ## 补丁内容概要（patchset5-v8.diff）
 
@@ -20,7 +20,7 @@
 # 1. 克隆上游仓库并检出目标 tag
 git clone https://github.com/router-for-me/CLIProxyAPI.git
 cd CLIProxyAPI
-git checkout v8.0.44
+git checkout v8.0.46
 
 # 2. 应用补丁集
 patch -p1 < /path/to/patchset5-v8.diff
@@ -32,7 +32,7 @@ go test ./internal/pluginhost/... ./internal/registry/...
 go test ./...
 
 # 4. 构建 Docker 镜像
-TAG="v8.0.44-patched-$(date +%Y%m%d)"
+TAG="v8.0.46-patched-$(date +%Y%m%d)"
 COMMIT=$(git rev-parse HEAD)
 BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
@@ -43,6 +43,6 @@ docker build \
   -t "local/cli-proxy-api:$TAG" .
 
 # 5. 更新 .env 中的 CPA_IMAGE 并启动
-# CPA_IMAGE=local/cli-proxy-api:v8.0.44-patched-YYYYMMDD
+# CPA_IMAGE=local/cli-proxy-api:v8.0.46-patched-YYYYMMDD
 docker compose up -d cli-proxy-api
 ```
